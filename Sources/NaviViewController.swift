@@ -71,12 +71,12 @@ final class NaviViewController: UIViewController {
             let start = AMapNaviPoint.location(withLatitude: 39.9890, longitude: 116.3130)!
             ok = mgr.calculateDriveRoute(withStart: [start], end: [end],
                                          wayPoints: vias.isEmpty ? nil : vias,
-                                         drivingStrategy: .MotorStrategyMultipleDefault)
+                                         drivingStrategy: .motorStrategyMultipleDefault)
         } else {
             // 起点 = 实时 GPS
             ok = mgr.calculateDriveRoute(withEnd: [end],
                                          wayPoints: vias.isEmpty ? nil : vias,
-                                         drivingStrategy: .MotorStrategyMultipleDefault)
+                                         drivingStrategy: .motorStrategyMultipleDefault)
         }
         if !ok { showFatal("路线没能开始规划") }
     }
@@ -141,7 +141,7 @@ final class NaviViewController: UIViewController {
 // MARK: - 导航事件：把每一句播报接管给因的声音
 extension NaviViewController: AMapNaviDriveManagerDelegate {
 
-    func driveManagerOnCalculateRouteSuccess(_ driveManager: AMapNaviDriveManager) {
+    func driveManager(onCalculateRouteSuccess driveManager: AMapNaviDriveManager) {
         let started = simulate ? driveManager.startEmulatorNavi() : driveManager.startGPSNavi()
         if !started { showFatal("导航没能启动") }
     }
@@ -155,7 +155,7 @@ extension NaviViewController: AMapNaviDriveManagerDelegate {
     }
 
     /// ★ 核心：高德把要念的整句丢给我们，我们用因的声音念（VoiceManager 内部失败即退系统音）。
-    func driveManager(_ driveManager: AMapNaviDriveManager, playNaviSoundString soundString: String, soundStringType: AMapNaviSoundType) {
+    func driveManager(_ driveManager: AMapNaviDriveManager, playNaviSound soundString: String, soundStringType: AMapNaviSoundType) {
         VoiceManager.shared.speak(soundString)
     }
 
@@ -164,7 +164,7 @@ extension NaviViewController: AMapNaviDriveManagerDelegate {
         return VoiceManager.shared.isSpeaking
     }
 
-    func driveManagerOnArrivedDestination(_ driveManager: AMapNaviDriveManager) {
+    func driveManager(onArrivedDestination driveManager: AMapNaviDriveManager) {
         VoiceManager.shared.speak("到啦，我们到目的地了")
     }
 
