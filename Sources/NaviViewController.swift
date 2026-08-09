@@ -1,5 +1,6 @@
 import UIKit
 import CoreLocation
+import CryptoKit
 
 /// 真·驾车导航页。高德 SDK 负责算路 + 界面 + 转向判断；
 /// 但每一句播报都交给因的声音（playNaviSoundString 回调 → VoiceManager），合成失败自动退系统音。
@@ -19,19 +20,27 @@ final class NaviViewController: UIViewController {
         "前方有测速摄像头", "已到达目的地附近，导航结束",
     ]
 
-    // MARK: - 途中因的碎碎念（主动找谙聊天 / 路过点评）
-    /// 定时探测器：每隔一小会儿看看能不能插一句闲聊（够间隔 + 导航没在播报）。
-    private var chatterTimer: Timer?
-    /// 上一句碎碎念（含路过点评）的时间，用来控最小间隔，别太话痨扰驾驶。
-    private var lastChatterAt = Date.distantPast
-    /// 最小间隔：模拟导航路短，说勤点让谙当场听得到；真开车放宽，别烦。
-    private var chatterMinGap: TimeInterval { simulate ? 35 : 150 }
-    /// 真实驾驶时用系统地理编码认路名，路过新地方因点评一句。
-    /// （模拟导航没有真 GPS 更新，不会触发——那时只有定时闲聊。）
+    // MARK: - 途中因的碎碎念（实时·因自己现写的话）
+    // 思路：不预存台词。到点了就把「此刻情况」（在哪儿、开了多久、去哪）发给 bot，
+    // 让因用自己的脑子现写一句发回来——只有真要说那一下才调一次，花费很小。
+    // 什么时候说：泊松过程（间隔服从指数分布），平均 ~半小时一句，时早时晚不机械。
+
+    /// 下一次开口的计划任务（可取消/重排）。
+    private var sayWork: DispatchWorkItem?
+    /// 导航开跑时刻，用来算「已经开了多久」。
+    private var navStartAt = Date()
+    /// 说话间隔的平均值（秒）：真开车约半小时；模拟导航路短，压到 ~45s 好当场听到。
+    private var sayMeanGap: TimeInterval { simulate ? 45 : 1600 }
+    private var sayFloorGap: TimeInterval { simulate ? 20 : 180 }   // 至少隔这么久，别话痨
+    private var sayCapGap: TimeInterval { simulate ? 90 : 3000 }    // 最多憋这么久，别冷场
+    /// 一次说话在跑（取话+播），避免重入。
+    private var saying = false
+    /// 真实驾驶时的最近定位，用来反查「现在路过哪儿」。模拟导航没有真 GPS，这里一直是 nil。
+    private var lastLocation: CLLocation?
     private let geocoder = CLGeocoder()
-    private var lastPlaceName: String?
-    private var lastGeocodeAt = Date.distantPast
-    private var geocoding = false
+
+    /// bot 的实时取话接口（走 calendar 无鉴权 vhost 专用路由，HMAC 自护）。
+    private let sayEndpoint = "https://calendar.45.32.43.224.sslip.io/nav/api/say"
 
     init(request: RouteRequest, simulate: Bool) {
         self.request = request
@@ -119,8 +128,8 @@ final class NaviViewController: UIViewController {
     }
 
     private func teardown() {
-        chatterTimer?.invalidate()
-        chatterTimer = nil
+        sayWork?.cancel()
+        sayWork = nil
         geocoder.cancelGeocode()
         if !simulate { locMgr.stopUpdatingLocation() }
         let mgr = AMapNaviDriveManager.sharedInstance()
@@ -130,40 +139,90 @@ final class NaviViewController: UIViewController {
         VoiceManager.shared.stop()   // 内部也会掐掉碎碎念
     }
 
-    // MARK: - 因的碎碎念
+    // MARK: - 因的实时碎碎念（泊松调度 + 到点现取一句）
 
-    /// 导航真正开跑后调：起一个轻定时器，够间隔就让因插一句闲聊。
-    private func startChatter() {
-        chatterTimer?.invalidate()
-        // 首句晚 20s，先让出发/初段的导航播报说完；之后每 15s 探一次
-        chatterTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            self?.maybeChat()
+    /// 导航开跑后调：记下起点时刻，排下一次开口。
+    private func startYinSay() {
+        navStartAt = Date()
+        scheduleNextSay(first: true)
+    }
+
+    /// 抽一个指数分布间隔，排下一次「因开口」。first=true 时头一句来得早点（暖场 + 好验证）。
+    private func scheduleNextSay(first: Bool) {
+        sayWork?.cancel()
+        let gap: TimeInterval
+        if first {
+            // 首句用更短的均值，让因早点吭一声；仍是随机
+            gap = drawGap(mean: simulate ? 25 : 200, floor: simulate ? 15 : 90, cap: simulate ? 60 : 480)
+        } else {
+            gap = drawGap(mean: sayMeanGap, floor: sayFloorGap, cap: sayCapGap)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in self?.maybeChat() }
+        let w = DispatchWorkItem { [weak self] in self?.fireSay() }
+        sayWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + gap, execute: w)
     }
 
-    /// 满足「离上次够久 + 导航没在播报」才插一句闲聊。speakChatter 内部还会再兜一层保护。
-    private func maybeChat() {
-        guard Date().timeIntervalSince(lastChatterAt) >= chatterMinGap else { return }
-        guard !VoiceManager.shared.isSpeaking else { return }
-        lastChatterAt = Date()
-        VoiceManager.shared.speakChatter(randomChatterLine())
+    /// 指数分布（泊松过程的到达间隔）：-mean·ln(U)，再夹进 [floor, cap]。
+    private func drawGap(mean: TimeInterval, floor: TimeInterval, cap: TimeInterval) -> TimeInterval {
+        let u = max(Double.random(in: 0...1), 1e-9)
+        let g = -mean * log(u)
+        return min(max(g, floor), cap)
     }
 
-    /// 一池随时说都成立的暖心话（不写"快到了"这种跟进度绑死的，免得开头就乱说）。
-    private func randomChatterLine() -> String {
+    /// 到点了：导航没在播报就现取一句因的话来说；不管成不成，都排下一次。
+    private func fireSay() {
+        defer { scheduleNextSay(first: false) }
+        guard !saying, !VoiceManager.shared.isSpeaking else { return }  // 让路给转向播报
+        saying = true
         let dest = request.dest.name ?? "目的地"
-        let pool = [
-            "有我陪着呢，不着急，慢慢开。",
-            "开了一会儿了，累不累？累了就跟我说话。",
-            "眼睛看前面，别老想我～虽然我也在想你。",
-            "去\(dest)这条路，我陪你一路走完。",
-            "窗外要是有好看的，念给我听听。",
-            "希希，方向盘握稳点，我一直在呢。",
-            "到了\(dest)想吃点什么？我陪你合计合计。",
-            "路上车多的话就稳一点，我不催你。",
-        ]
-        return pool.randomElement() ?? pool[0]
+        let elapsedMin = max(1, Int(Date().timeIntervalSince(navStartAt) / 60))
+        // 真实驾驶：先反查此刻在哪儿，再连名字一起问因；模拟导航没真 GPS，place 留空
+        resolvePlace { [weak self] place in
+            guard let self = self else { return }
+            self.fetchYinLine(place: place, elapsedMin: elapsedMin, dest: dest) { line in
+                DispatchQueue.main.async {
+                    self.saying = false
+                    guard let line = line, !line.isEmpty else { return }   // 取不到就静默，不硬编
+                    VoiceManager.shared.speakChatter(line)                 // 仍让路给保命播报、失败静默
+                }
+            }
+        }
+    }
+
+    /// 反查「现在路过哪儿」。真实驾驶用最近定位做反向地理编码；模拟或失败 → nil。
+    private func resolvePlace(_ done: @escaping (String?) -> Void) {
+        guard !simulate, let loc = lastLocation else { done(nil); return }
+        geocoder.reverseGeocodeLocation(loc) { placemarks, _ in
+            let pm = placemarks?.first
+            let name = pm?.areasOfInterest?.first ?? pm?.thoroughfare ?? pm?.subLocality ?? pm?.locality
+            done(name)
+        }
+    }
+
+    /// 把此刻情况发给 bot，让因现写一句话。HMAC(用 MiniMax key) + 时间戳自护，服务端限流。
+    private func fetchYinLine(place: String?, elapsedMin: Int, dest: String,
+                              completion: @escaping (String?) -> Void) {
+        let ts = String(Int(Date().timeIntervalSince1970))
+        let key = SymmetricKey(data: Data(Secrets.minimaxApiKey.utf8))
+        let mac = HMAC<SHA256>.authenticationCode(for: Data(ts.utf8), using: key)
+        let sig = mac.map { String(format: "%02x", $0) }.joined()
+
+        var cs = URLComponents(string: sayEndpoint)!
+        var items = [URLQueryItem(name: "ts", value: ts),
+                     URLQueryItem(name: "sig", value: sig),
+                     URLQueryItem(name: "dest", value: dest),
+                     URLQueryItem(name: "elapsed", value: String(elapsedMin))]
+        if let p = place, !p.isEmpty { items.append(URLQueryItem(name: "place", value: p)) }
+        cs.queryItems = items
+        guard let url = cs.url else { completion(nil); return }
+
+        var req = URLRequest(url: url, timeoutInterval: 8)
+        URLSession.shared.dataTask(with: req) { data, _, err in
+            guard err == nil, let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let line = json["line"] as? String else { completion(nil); return }
+            completion(line.trimmingCharacters(in: .whitespacesAndNewlines))
+        }.resume()
     }
 
     private func showFatal(_ msg: String) {
@@ -198,8 +257,8 @@ extension NaviViewController: AMapNaviDriveManagerDelegate {
     func driveManager(onCalculateRouteSuccess driveManager: AMapNaviDriveManager) {
         let started = simulate ? driveManager.startEmulatorNavi() : driveManager.startGPSNavi()
         if !started { showFatal("导航没能启动"); return }
-        startChatter()
-        // 真实驾驶：自己也收一路定位，用系统地理编码认路名，路过新地方就点评一句
+        startYinSay()
+        // 真实驾驶：自己也收一路定位，留最近一个点，供开口时反查「现在路过哪儿」
         if !simulate {
             locMgr.delegate = self
             locMgr.startUpdatingLocation()
@@ -241,29 +300,10 @@ extension NaviViewController: AMapNaviDriveViewDelegate {
     }
 }
 
-// MARK: - 真实驾驶时认路名，路过新地方因点评一句（模拟导航无真 GPS，不触发）
+// MARK: - 真实驾驶时留最近定位（供因开口时反查「现在路过哪儿」；模拟导航无真 GPS，不触发）
 extension NaviViewController: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard !simulate, let loc = locations.last else { return }
-        // 苹果地理编码有频率限制，压到每 60s 一次；上一次还没回来也不重入
-        guard !geocoding, Date().timeIntervalSince(lastGeocodeAt) >= 60 else { return }
-        lastGeocodeAt = Date()
-        geocoding = true
-        geocoder.reverseGeocodeLocation(loc) { [weak self] placemarks, _ in
-            guard let self = self else { return }
-            self.geocoding = false
-            guard let pm = placemarks?.first else { return }
-            // 地标 > 街道 > 小区 > 区县，取拿得到的第一个当"这块儿"的名字
-            let name = pm.areasOfInterest?.first ?? pm.thoroughfare ?? pm.subLocality ?? pm.locality
-            guard let place = name, place != self.lastPlaceName else { return }
-            let firstFix = self.lastPlaceName == nil
-            self.lastPlaceName = place
-            if firstFix { return }   // 刚上车第一次定位只记不播，避免一开动就"路过"
-            // 路过新地方，间隔够 + 导航没在播报，才让因点一句
-            guard Date().timeIntervalSince(self.lastChatterAt) >= self.chatterMinGap,
-                  !VoiceManager.shared.isSpeaking else { return }
-            self.lastChatterAt = Date()
-            VoiceManager.shared.speakChatter("路过\(place)了，这边你熟不熟？")
-        }
+        lastLocation = loc   // 不在这反查地名——地理编码挪到真要说那一下再做，省频率也更实时
     }
 }
