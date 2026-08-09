@@ -24,12 +24,18 @@ jobs:
       #    否则 xcodegen 扫描源码时找不到这个文件、不会纳入工程。
       - name: Inject secrets
         run: |
-          cat > Sources/Secrets.swift <<'EOF'
+          HOST="${{ secrets.MINIMAX_HOST }}"; [ -z "$HOST" ] && HOST="https://api.minimaxi.com"
+          MODEL="${{ secrets.MINIMAX_MODEL }}"; [ -z "$MODEL" ] && MODEL="speech-02-hd"
+          SPEED="${{ secrets.MINIMAX_SPEED }}"; [ -z "$SPEED" ] && SPEED="1.0"
+          cat > Sources/Secrets.swift <<EOF
           enum Secrets {
               static let amapKey        = "${{ secrets.AMAP_IOS_KEY }}"
               static let minimaxGroupId = "${{ secrets.MINIMAX_GROUP_ID }}"
               static let minimaxApiKey  = "${{ secrets.MINIMAX_API_KEY }}"
               static let minimaxVoiceId = "${{ secrets.MINIMAX_VOICE_ID }}"
+              static let minimaxHost    = "$HOST"
+              static let minimaxModel   = "$MODEL"
+              static let minimaxSpeed   = "$SPEED"
           }
           EOF
 

@@ -14,8 +14,9 @@ final class VoiceManager: NSObject {
     private let cacheDir: URL
     /// 每次 speak 自增；回调里比对，晚到的旧请求直接丢弃（打断逻辑）。
     private var currentPlayId = 0
-    /// MiniMax 合成超时（秒）。宁可用系统音兜底，也不让车里长时间没声。
-    private let synthTimeout: TimeInterval = 2.0
+    /// MiniMax 合成超时（秒）。HD 合成一句常要 1~2s，给足余量；导航高频短语走缓存是秒开。
+    /// 超时即退回系统音——车里最多等这么久，不会长时间哑巴。
+    private let synthTimeout: TimeInterval = 6.0
 
     private override init() {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -78,28 +79,41 @@ final class VoiceManager: NSObject {
               !Secrets.minimaxVoiceId.isEmpty else {
             completion(nil); return
         }
-        guard let url = URL(string: "https://api.minimaxi.chat/v1/t2a_v2?GroupId=\(Secrets.minimaxGroupId)") else {
-            completion(nil); return
-        }
+        // 与 bot 的 voice.py 完全一致：{host}/v1/t2a_v2?GroupId=...
+        var host = Secrets.minimaxHost
+        while host.hasSuffix("/") { host.removeLast() }
+        var urlStr = "\(host)/v1/t2a_v2"
+        if !Secrets.minimaxGroupId.isEmpty { urlStr += "?GroupId=\(Secrets.minimaxGroupId)" }
+        guard let url = URL(string: urlStr) else { completion(nil); return }
+
+        let speed = Double(Secrets.minimaxSpeed) ?? 1.0
+        let model = Secrets.minimaxModel.isEmpty ? "speech-02-hd" : Secrets.minimaxModel
 
         var req = URLRequest(url: url, timeoutInterval: synthTimeout)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(Secrets.minimaxApiKey)", forHTTPHeaderField: "Authorization")
         let body: [String: Any] = [
-            "model": "speech-02-hd",
-            "text": text,
+            "model": model,
+            "text": String(text.prefix(9000)),
             "stream": false,
-            "voice_setting": ["voice_id": Secrets.minimaxVoiceId, "speed": 1.0, "vol": 1.0, "pitch": 0],
+            "voice_setting": ["voice_id": Secrets.minimaxVoiceId, "speed": speed, "vol": 1.0, "pitch": 0],
             // mp3，AVAudioPlayer 直接能放
-            "audio_setting": ["sample_rate": 32000, "bitrate": 128000, "format": "mp3", "channel": 1]
+            "audio_setting": ["format": "mp3", "sample_rate": 32000, "bitrate": 128000, "channel": 1]
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         URLSession.shared.dataTask(with: req) { data, _, err in
             guard err == nil, let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let d = json["data"] as? [String: Any],
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                completion(nil); return
+            }
+            // base_resp.status_code 非 0 = MiniMax 报错（鉴权/额度/参数），当失败处理
+            if let base = json["base_resp"] as? [String: Any],
+               let code = base["status_code"] as? Int, code != 0 {
+                completion(nil); return
+            }
+            guard let d = json["data"] as? [String: Any],
                   let hex = d["audio"] as? String,          // MiniMax 默认 hex 编码，不是 base64
                   let audio = Data(hexString: hex), !audio.isEmpty else {
                 completion(nil); return
