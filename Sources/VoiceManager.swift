@@ -17,6 +17,14 @@ final class VoiceManager: NSObject {
     /// MiniMax 合成超时（秒）。HD 合成一句常要 1~2s，给足余量；导航高频短语走缓存是秒开。
     /// 超时即退回系统音——车里最多等这么久，不会长时间哑巴。
     private let synthTimeout: TimeInterval = 6.0
+    /// 「正在忙」标志：从收到 speak 请求（含网络合成那段空档）起为 true，直到真正播完/兜底播完。
+    /// 高德的 driveManagerIsNaviSoundPlaying 靠它判断——忙就别急着发下一句，避免抢播。
+    private var busy = false
+
+    /// 因此刻是否在出声（含合成中的空档）。高德用它决定要不要发下一句播报。
+    var isSpeaking: Bool {
+        return busy || (player?.isPlaying ?? false) || synth.isSpeaking
+    }
 
     private override init() {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -35,6 +43,7 @@ final class VoiceManager: NSObject {
 
         currentPlayId += 1
         let playId = currentPlayId
+        busy = true   // 从这一刻起就算"在忙"，覆盖住网络合成的空档
 
         // 打断上一句
         player?.stop()
@@ -58,6 +67,16 @@ final class VoiceManager: NSObject {
                 self.fallback(text)
             }
         }
+    }
+
+    /// 立刻停声（导航结束/退出页面时调）。
+    func stop() {
+        currentPlayId += 1
+        player?.stop()
+        player = nil
+        synth.stopSpeaking(at: .immediate)
+        busy = false
+        deactivateSession()
     }
 
     /// 预合成一批高频短语进缓存（Phase 2b 导航开始前调，避免第一次现合成的空档）。
@@ -132,6 +151,7 @@ final class VoiceManager: NSObject {
                 self.player = try AVAudioPlayer(data: data)
                 self.player?.delegate = self
                 self.player?.play()
+                self.busy = false   // 已在放，player.isPlaying 接管"在忙"状态
             } catch {
                 self.fallback(fallbackText)
             }
@@ -146,6 +166,7 @@ final class VoiceManager: NSObject {
             u.voice = AVSpeechSynthesisVoice(language: "zh-CN")
             u.rate = AVSpeechUtteranceDefaultSpeechRate
             self.synth.speak(u)
+            self.busy = false   // 已交给系统合成器，synth.isSpeaking 接管"在忙"状态
         }
     }
 
@@ -181,11 +202,13 @@ final class VoiceManager: NSObject {
 // MARK: - 播放结束后让出音频会话
 extension VoiceManager: AVAudioPlayerDelegate {
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        busy = false
         deactivateSession()
     }
 }
 extension VoiceManager: AVSpeechSynthesizerDelegate {
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        busy = false
         deactivateSession()
     }
 }

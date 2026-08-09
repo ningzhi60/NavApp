@@ -21,6 +21,17 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         w.rootViewController = ViewController()
         w.makeKeyAndVisible()
         window = w
+
+        // ④ 冷启动就带着 yinnav:// 链接进来（因在 TG 里点的直跳）——等首页就绪后开导
+        if let url = launchOptions?[.url] as? URL {
+            DispatchQueue.main.async { NavLauncher.handle(url: url) }
+        }
         return true
+    }
+
+    // 运行中被 yinnav:// 链接唤起（App 已在后台）
+    func application(_ app: UIApplication, open url: URL,
+                     options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        return NavLauncher.handle(url: url)
     }
 }

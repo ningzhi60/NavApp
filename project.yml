@@ -35,6 +35,11 @@ targets:
         UIBackgroundModes:
           - location
           - audio
+        # 自定义 URL scheme：因在 TG 发的链接（或网页跳板）用 yinnav://nav?... 直接拉起本 App 开导
+        CFBundleURLTypes:
+          - CFBundleURLName: com.an.yinnav
+            CFBundleURLSchemes:
+              - yinnav
 schemes:
   NavApp:
     build:
