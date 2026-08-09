@@ -24,16 +24,32 @@ final class ViewController: UIViewController {
         // 引用高德导航类，强制链接；能拿到单例即说明 SDK 链接成功。
         _ = AMapNaviDriveManager.sharedInstance()
         let keyTail = Secrets.amapKey.isEmpty ? "（空！Secrets 没注入）" : String(Secrets.amapKey.suffix(4))
+        let mmReady = !Secrets.minimaxApiKey.isEmpty && !Secrets.minimaxVoiceId.isEmpty
 
         label.text = """
-        因导航 · Phase 1 自检
+        因导航 · Phase 2a 自检
 
         高德 SDK 链接：OK ✅
-        Key 尾号：\(keyTail)
+        高德 Key 尾号：\(keyTail)
+        因的声音配置：\(mmReady ? "已就绪 ✅" : "未配置（会用系统音兜底）")
 
-        看到这行字 =
-        编译 / 侧载 / 启动 全部打通
-        下一步做真导航 + 因的声音
+        点下面按钮试听因的声音
         """
+
+        // 试听按钮：跑一遍完整声音管线（MiniMax→缓存→播放，失败兜底系统音）
+        let btn = UIButton(type: .system)
+        btn.setTitle("🔊 试听：前方路口，请右转", for: .normal)
+        btn.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.addTarget(self, action: #selector(tapTest), for: .touchUpInside)
+        view.addSubview(btn)
+        NSLayoutConstraint.activate([
+            btn.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 32),
+            btn.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        ])
+    }
+
+    @objc private func tapTest() {
+        VoiceManager.shared.speak("前方路口，请右转")
     }
 }
