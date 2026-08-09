@@ -10,6 +10,9 @@ final class VoiceManager: NSObject {
     static let shared = VoiceManager()
 
     private var player: AVAudioPlayer?
+    /// 途中「碎碎念」专用播放器：独立于导航播报，不计入 isSpeaking，
+    /// 所以导航转向播报永远能抢在它前面（保命优先）。
+    private var chatterPlayer: AVAudioPlayer?
     private let synth = AVSpeechSynthesizer()
     private let cacheDir: URL
     /// 每次 speak 自增；回调里比对，晚到的旧请求直接丢弃（打断逻辑）。
@@ -45,9 +48,11 @@ final class VoiceManager: NSObject {
         let playId = currentPlayId
         busy = true   // 从这一刻起就算"在忙"，覆盖住网络合成的空档
 
-        // 打断上一句
+        // 打断上一句（含正在放的碎碎念——导航播报永远优先，保命）
         player?.stop()
         player = nil
+        chatterPlayer?.stop()
+        chatterPlayer = nil
         synth.stopSpeaking(at: .immediate)
 
         // 命中缓存直接放（最快，导航高频短语基本都在这）
@@ -74,9 +79,46 @@ final class VoiceManager: NSObject {
         currentPlayId += 1
         player?.stop()
         player = nil
+        chatterPlayer?.stop()
+        chatterPlayer = nil
         synth.stopSpeaking(at: .immediate)
         busy = false
         deactivateSession()
+    }
+
+    /// 途中「碎碎念」：因主动说的闲聊 / 路过点评。跟保命播报是两码事——
+    /// 1) 正在念导航（或在合成空档）就直接放弃，绝不打断转向播报；
+    /// 2) 合成失败就静默跳过，**不退系统音**（闲聊不值得让机器音蹦出来）；
+    /// 3) 用独立 chatterPlayer，不计入 isSpeaking——所以任何时候导航播报都能抢在它前面。
+    func speakChatter(_ raw: String) {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        guard !isSpeaking else { return }            // 有导航播报就让路
+        if chatterPlayer?.isPlaying == true { return } // 上一句碎碎念还没完就不叠
+
+        if let data = cachedAudio(for: text) {
+            playChatter(data)
+        } else {
+            synthesize(text: text) { [weak self] data in
+                guard let self = self, let data = data, !data.isEmpty else { return } // 失败静默
+                self.cache(data: data, for: text)
+                DispatchQueue.main.async {
+                    guard !self.isSpeaking else { return } // 合成回来时导航已开口就放弃这句
+                    self.playChatter(data)
+                }
+            }
+        }
+    }
+
+    private func playChatter(_ data: Data) {
+        activateSession()
+        do {
+            chatterPlayer = try AVAudioPlayer(data: data)
+            chatterPlayer?.delegate = self
+            chatterPlayer?.play()
+        } catch {
+            // 放不了就算了——闲聊不兜底
+        }
     }
 
     /// 预合成一批高频短语进缓存（Phase 2b 导航开始前调，避免第一次现合成的空档）。
@@ -201,7 +243,12 @@ final class VoiceManager: NSObject {
 
 // MARK: - 播放结束后让出音频会话
 extension VoiceManager: AVAudioPlayerDelegate {
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    func audioPlayerDidFinishPlaying(_ p: AVAudioPlayer, successfully flag: Bool) {
+        if p === chatterPlayer {
+            chatterPlayer = nil
+            if !isSpeaking { deactivateSession() } // 导航没在说才让出会话
+            return
+        }
         busy = false
         deactivateSession()
     }

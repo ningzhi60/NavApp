@@ -9,3 +9,6 @@ Podfile.lock
 *.xcworkspace/
 DerivedData/
 .DS_Store
+
+# 本地侧载产物（CI artifact 下载来的，不进仓库）
+dist/
