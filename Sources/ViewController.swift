@@ -20,12 +20,17 @@ final class ViewController: UIViewController {
 
         // 引用高德导航类，强制链接；能拿到单例即说明 SDK 链接成功。
         _ = AMapNaviDriveManager.sharedInstance()
+        let keyLen = Secrets.amapKey.count
         let keyTail = Secrets.amapKey.isEmpty ? "（空！Secrets 没注入）" : String(Secrets.amapKey.suffix(4))
+        // 高德鉴权真正比对的是「运行时包名」——免费侧载可能被 Sideloadly 改掉，这里如实打出来
+        let bundleId = Bundle.main.bundleIdentifier ?? "（读不到）"
+        let bundleOK = bundleId == "com.an.yinnav"
         let mmReady = !Secrets.minimaxApiKey.isEmpty && !Secrets.minimaxVoiceId.isEmpty
         label.text = """
         因导航 · Phase 2b
 
-        高德 SDK：OK ✅  Key 尾号 \(keyTail)
+        高德 SDK：OK ✅  Key 尾号 \(keyTail)（\(keyLen)位）
+        运行包名：\(bundleId) \(bundleOK ? "✅" : "⚠️ 跟 key 绑定不符！")
         因的声音：\(mmReady ? "已就绪 ✅" : "未配置（会用系统音兜底）")
 
         · 因在 TG 发的链接 → 点开直接开导
