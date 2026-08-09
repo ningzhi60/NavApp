@@ -8,9 +8,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
 
         // ① 高德隐私合规：8.1.0 起，任何 SDK 接口调用前必须先声明，否则 SDK 静默罢工。
-        //    （若某个 SDK 版本方法签名不同导致编译报错，按 CI 的 Swift 报错微调枚举名即可。）
-        AMapNaviDriveManager.updatePrivacyShow(.didShow, privacyInfo: .didContain)
-        AMapNaviDriveManager.updatePrivacyAgree(.didAgree)
+        //    这版 SDK 的隐私开关是 MAMapView 的类方法（设的是全局标志，导航同样生效）。
+        MAMapView.updatePrivacyShow(.didShow, privacyInfo: .didContain)
+        MAMapView.updatePrivacyAgree(.didAgree)
 
         // ② 设置高德 Key（CI 编译时由 GitHub Secrets 注入到 Secrets.swift）
         AMapServices.shared().enableHTTPS = true
