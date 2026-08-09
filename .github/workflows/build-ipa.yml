@@ -57,6 +57,23 @@ jobs:
           done
           echo "pod install 连续 3 次失败"; exit 1
 
+      # 临时诊断：dump 高德导航相关 API 真实签名（写 2b 前一次拿准）
+      - name: Dump AMap navi API
+        run: |
+          H=Pods/AMapNavi/AMapNaviKit.framework/Headers
+          echo "===== Headers 列表 ====="; ls "$H"
+          echo "===== 自定义语音回调 ====="
+          grep -rn "playNaviSoundString\|NaviSoundPlaying\|StopPlayNaviSound\|stopPlayNaviSound" "$H" || true
+          echo "===== DriveManagerDelegate 协议方法 ====="
+          sed -n '/@protocol AMapNaviDriveManagerDelegate/,/@end/p' "$H"/AMapNaviDriveManager.h | grep -nE "^- |^@optional|^@required" || true
+          echo "===== DriveManager 路线/启动/单例 ====="
+          grep -nE "sharedInstance|calculateDriveRoute|startEmulatorNavi|startGPSNavi|\bdelegate\b|stopNavi" "$H"/AMapNaviDriveManager.h || true
+          echo "===== AMapNaviPoint 构造 ====="
+          grep -rn "AMapNaviPoint\|pointWithLatitude\|pointWithCoordinate" "$H" | head -20 || true
+          echo "===== DriveView 头 ====="
+          ls "$H" | grep -i "driveview\|drivemanager" || true
+          grep -nE "@interface AMapNaviDriveView|- \(void\)|@property" "$H"/AMapNaviDriveView.h 2>/dev/null | head -30 || true
+
       - name: Build unsigned archive
         run: |
           xcodebuild archive \
