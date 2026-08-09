@@ -46,9 +46,7 @@ final class NaviViewController: UIViewController {
         // 先把高频播报灌进缓存，再算路
         VoiceManager.shared.prewarm(warmupPhrases)
 
-        guard let mgr = AMapNaviDriveManager.sharedInstance() else {
-            showFatal("高德导航没初始化成功"); return
-        }
+        let mgr = AMapNaviDriveManager.sharedInstance()
         mgr.delegate = self
         mgr.addDataRepresentative(driveView)
         calculateRoute(mgr)
@@ -71,14 +69,14 @@ final class NaviViewController: UIViewController {
         if simulate {
             // 固定起点（北京中关村附近），室内也能算出一条路来试因的声音
             let start = AMapNaviPoint.location(withLatitude: 39.9890, longitude: 116.3130)!
-            ok = mgr.calculateDriveRoute(withStartPoints: [start], endPoints: [end],
+            ok = mgr.calculateDriveRoute(withStart: [start], end: [end],
                                          wayPoints: vias.isEmpty ? nil : vias,
-                                         drivingStrategy: .multipleDefault)
+                                         drivingStrategy: .MotorStrategyMultipleDefault)
         } else {
             // 起点 = 实时 GPS
-            ok = mgr.calculateDriveRoute(withEndPoints: [end],
+            ok = mgr.calculateDriveRoute(withEnd: [end],
                                          wayPoints: vias.isEmpty ? nil : vias,
-                                         drivingStrategy: .multipleDefault)
+                                         drivingStrategy: .MotorStrategyMultipleDefault)
         }
         if !ok { showFatal("路线没能开始规划") }
     }
@@ -107,11 +105,10 @@ final class NaviViewController: UIViewController {
     }
 
     private func teardown() {
-        if let mgr = AMapNaviDriveManager.sharedInstance() {
-            mgr.stopNavi()
-            mgr.removeDataRepresentative(driveView)
-            mgr.delegate = nil
-        }
+        let mgr = AMapNaviDriveManager.sharedInstance()
+        mgr.stopNavi()
+        mgr.removeDataRepresentative(driveView)
+        mgr.delegate = nil
         VoiceManager.shared.stop()
     }
 
@@ -144,34 +141,34 @@ final class NaviViewController: UIViewController {
 // MARK: - 导航事件：把每一句播报接管给因的声音
 extension NaviViewController: AMapNaviDriveManagerDelegate {
 
-    func driveManagerOnCalculateRouteSuccess(_ driveManager: AMapNaviDriveManager!) {
+    func driveManagerOnCalculateRouteSuccess(_ driveManager: AMapNaviDriveManager) {
         let started = simulate ? driveManager.startEmulatorNavi() : driveManager.startGPSNavi()
         if !started { showFatal("导航没能启动") }
     }
 
-    func driveManager(_ driveManager: AMapNaviDriveManager!, onCalculateRouteFailure error: Error!) {
-        showFatal("算路失败：\(error?.localizedDescription ?? "未知")")
+    func driveManager(_ driveManager: AMapNaviDriveManager, onCalculateRouteFailure error: Error) {
+        showFatal("算路失败：\(error.localizedDescription)")
     }
 
-    func driveManager(_ driveManager: AMapNaviDriveManager!, error: Error!) {
+    func driveManager(_ driveManager: AMapNaviDriveManager, error: Error) {
         // 运行时错误：不弹窗打断导航，交给声音兜底逻辑即可
     }
 
     /// ★ 核心：高德把要念的整句丢给我们，我们用因的声音念（VoiceManager 内部失败即退系统音）。
-    func driveManager(_ driveManager: AMapNaviDriveManager!, playNaviSoundString soundString: String!, soundStringType: AMapNaviSoundType) {
-        VoiceManager.shared.speak(soundString ?? "")
+    func driveManager(_ driveManager: AMapNaviDriveManager, playNaviSoundString soundString: String, soundStringType: AMapNaviSoundType) {
+        VoiceManager.shared.speak(soundString)
     }
 
     /// ★ 配套：告诉高德"因还在念吗"。还在念就先别发下一句，避免抢播 / 刷屏。
-    func driveManagerIsNaviSoundPlaying(_ driveManager: AMapNaviDriveManager!) -> Bool {
+    func driveManagerIsNaviSoundPlaying(_ driveManager: AMapNaviDriveManager) -> Bool {
         return VoiceManager.shared.isSpeaking
     }
 
-    func driveManagerOnArrivedDestination(_ driveManager: AMapNaviDriveManager!) {
+    func driveManagerOnArrivedDestination(_ driveManager: AMapNaviDriveManager) {
         VoiceManager.shared.speak("到啦，我们到目的地了")
     }
 
-    func driveManagerDidEndEmulatorNavi(_ driveManager: AMapNaviDriveManager!) {
+    func driveManagerDidEndEmulatorNavi(_ driveManager: AMapNaviDriveManager) {
         // 模拟导航跑完，自动收尾
         dismiss(animated: true)
     }
@@ -179,7 +176,7 @@ extension NaviViewController: AMapNaviDriveManagerDelegate {
 
 // MARK: - 导航界面上的按钮（关闭等）
 extension NaviViewController: AMapNaviDriveViewDelegate {
-    func driveViewCloseButtonClicked(_ driveView: AMapNaviDriveView!) {
+    func driveViewCloseButtonClicked(_ driveView: AMapNaviDriveView) {
         dismiss(animated: true)
     }
 }
