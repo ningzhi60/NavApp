@@ -7,9 +7,18 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15          # 默认 Xcode 16，能打开 XcodeGen/CocoaPods 生成的新工程格式(format 77)
     steps:
       - uses: actions/checkout@v4
+
+      # ⓪ 选最新的 Xcode 16，避免默认落到旧版本打不开新工程格式
+      - name: Select latest Xcode
+        run: |
+          latest=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$latest" ]; then latest=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1); fi
+          echo "Using $latest"
+          sudo xcode-select -s "$latest/Contents/Developer"
+          xcodebuild -version
 
       # ① 先把密钥从 GitHub Secrets 注入成 Secrets.swift —— 必须在 xcodegen 之前，
       #    否则 xcodegen 扫描源码时找不到这个文件、不会纳入工程。
