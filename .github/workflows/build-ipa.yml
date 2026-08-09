@@ -42,14 +42,6 @@ jobs:
       - name: Install CocoaPods deps
         run: pod install --repo-update
 
-      # 临时诊断：dump 高德头文件里隐私合规相关的真实 API 签名（一次拿准，避免反复猜）
-      - name: Dump AMap privacy API
-        run: |
-          echo "===== updatePrivacy 相关声明 ====="
-          grep -rn "updatePrivacy" Pods/ || echo "（没搜到 updatePrivacy）"
-          echo "===== AMapPrivacy 枚举/常量 ====="
-          grep -rn "AMapPrivacy" Pods/AMapFoundation* Pods/AMapNavi* 2>/dev/null | head -40 || true
-
       - name: Build unsigned archive
         run: |
           xcodebuild archive \
