@@ -46,7 +46,16 @@ jobs:
         run: xcodegen generate
 
       - name: Install CocoaPods deps
-        run: pod install --repo-update
+        run: |
+          # 高德 pod 从 CDN 下二进制，偶发 connection reset；重试最多 3 次
+          n=0
+          until [ $n -ge 3 ]; do
+            if pod install --repo-update; then exit 0; fi
+            n=$((n+1))
+            echo "pod install 第 $n 次失败，5s 后重试…"
+            sleep 5
+          done
+          echo "pod install 连续 3 次失败"; exit 1
 
       - name: Build unsigned archive
         run: |
