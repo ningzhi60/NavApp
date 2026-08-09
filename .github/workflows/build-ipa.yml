@@ -57,22 +57,27 @@ jobs:
           done
           echo "pod install 连续 3 次失败"; exit 1
 
-      # 临时诊断：dump 高德导航相关 API 真实签名（写 2b 前一次拿准）
+      # 临时诊断(第2轮)：补齐启动导航/Point构造/路线签名/DriveView初始化
       - name: Dump AMap navi API
         run: |
           H=Pods/AMapNavi/AMapNaviKit.framework/Headers
-          echo "===== Headers 列表 ====="; ls "$H"
-          echo "===== 自定义语音回调 ====="
-          grep -rn "playNaviSoundString\|NaviSoundPlaying\|StopPlayNaviSound\|stopPlayNaviSound" "$H" || true
-          echo "===== DriveManagerDelegate 协议方法 ====="
-          sed -n '/@protocol AMapNaviDriveManagerDelegate/,/@end/p' "$H"/AMapNaviDriveManager.h | grep -nE "^- |^@optional|^@required" || true
-          echo "===== DriveManager 路线/启动/单例 ====="
-          grep -nE "sharedInstance|calculateDriveRoute|startEmulatorNavi|startGPSNavi|\bdelegate\b|stopNavi" "$H"/AMapNaviDriveManager.h || true
-          echo "===== AMapNaviPoint 构造 ====="
-          grep -rn "AMapNaviPoint\|pointWithLatitude\|pointWithCoordinate" "$H" | head -20 || true
-          echo "===== DriveView 头 ====="
-          ls "$H" | grep -i "driveview\|drivemanager" || true
-          grep -nE "@interface AMapNaviDriveView|- \(void\)|@property" "$H"/AMapNaviDriveView.h 2>/dev/null | head -30 || true
+          echo "===== ManagerConfig 启动/停止导航 ====="
+          grep -nE "startGPSNavi|startEmulatorNavi|stopNavi|presetNavi|- \(BOOL\)start|- \(BOOL\)stop|setEmulatorSpeed" "$H"/AMapNaviManagerConfig.h 2>/dev/null || echo "(no ManagerConfig.h)"
+          echo "===== 谁定义了 startEmulatorNavi/startGPSNavi ====="
+          grep -rln "startEmulatorNavi\|startGPSNavi" "$H" || true
+          grep -rn "startEmulatorNavi\|startGPSNavi\|- (BOOL)stopNavi\|(void)stopNavi" "$H" | head -20 || true
+          echo "===== AMapNaviPoint 定义块(612-660) ====="
+          sed -n '612,660p' "$H"/AMapNaviCommonObj.h || true
+          echo "===== calculateDriveRouteWithStartPoints 完整签名(198-240) ====="
+          sed -n '198,240p' "$H"/AMapNaviDriveManager.h || true
+          echo "===== AMapNaviSoundType 枚举 ====="
+          grep -rn "AMapNaviSoundType" "$H"/AMapNaviCommonObj.h | head || true
+          sed -n '/AMapNaviSoundType/,/}/p' "$H"/AMapNaviCommonObj.h | head -30 || true
+          echo "===== AMapNaviDrivingStrategy 枚举 ====="
+          sed -n '/AMapNaviDrivingStrategy/,/}/p' "$H"/AMapNaviCommonObj.h | head -40 || true
+          echo "===== DriveView init / DriveViewDelegate ====="
+          sed -n '1,40p' "$H"/AMapNaviDriveView.h || true
+          grep -rn "@protocol AMapNaviDriveViewDelegate" "$H" || true
 
       - name: Build unsigned archive
         run: |
