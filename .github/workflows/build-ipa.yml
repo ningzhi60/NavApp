@@ -1,0 +1,61 @@
+name: Build IPA
+
+on:
+  workflow_dispatch:        # 允许在 GitHub 网页上手动点按钮触发
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      # ① 先把密钥从 GitHub Secrets 注入成 Secrets.swift —— 必须在 xcodegen 之前，
+      #    否则 xcodegen 扫描源码时找不到这个文件、不会纳入工程。
+      - name: Inject secrets
+        run: |
+          cat > Sources/Secrets.swift <<'EOF'
+          enum Secrets {
+              static let amapKey        = "${{ secrets.AMAP_IOS_KEY }}"
+              static let minimaxGroupId = "${{ secrets.MINIMAX_GROUP_ID }}"
+              static let minimaxApiKey  = "${{ secrets.MINIMAX_API_KEY }}"
+              static let minimaxVoiceId = "${{ secrets.MINIMAX_VOICE_ID }}"
+          }
+          EOF
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Install CocoaPods deps
+        run: pod install --repo-update
+
+      - name: Build unsigned archive
+        run: |
+          xcodebuild archive \
+            -workspace NavApp.xcworkspace \
+            -scheme NavApp \
+            -configuration Release \
+            -archivePath build/NavApp.xcarchive \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package unsigned IPA
+        run: |
+          cd build
+          mkdir -p Payload
+          cp -r NavApp.xcarchive/Products/Applications/NavApp.app Payload/
+          zip -r NavApp.ipa Payload
+          rm -rf Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NavApp-ipa
+          path: build/NavApp.ipa
+          if-no-files-found: error

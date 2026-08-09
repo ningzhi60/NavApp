@@ -1,0 +1,11 @@
+# 真密钥不进仓库（CI 注入生成）
+Sources/Secrets.swift
+
+# 生成物 / 依赖（CI 每次重建）
+build/
+Pods/
+Podfile.lock
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+.DS_Store

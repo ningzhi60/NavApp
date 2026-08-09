@@ -1,0 +1,46 @@
+name: NavApp
+options:
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+targets:
+  NavApp:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.an.yinnav
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/NavApp-Bridging-Header.h
+        TARGETED_DEVICE_FAMILY: "1"
+        # 静态链接高德（不用 use_frameworks!），配桥接头即可在 Swift 里用 ObjC SDK
+        CLANG_ENABLE_MODULES: YES
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: 因导航
+        CFBundleShortVersionString: "0.1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # 定位权限：导航必需
+        NSLocationWhenInUseUsageDescription: 用于导航定位，实时规划路线并在路口给你播报。
+        NSLocationAlwaysAndWhenInUseUsageDescription: 锁屏或切到后台也要持续定位，你开车时导航才不会中断。
+        NSLocationTemporaryUsageDescriptionDictionary: {}
+        # 后台模式：location = 后台持续定位；audio = 后台/锁屏也能播报语音
+        UIBackgroundModes:
+          - location
+          - audio
+schemes:
+  NavApp:
+    build:
+      targets:
+        NavApp: all
+    run:
+      config: Release
+    archive:
+      config: Release
