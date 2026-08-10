@@ -66,6 +66,10 @@ final class NaviViewController: UIViewController {
             locMgr.requestWhenInUseAuthorization()
         }
 
+        // Phase A 只请求语音权限；不在导航中启动收音，也不改变现有播放音频会话。
+        // 权限被拒绝时语音唤醒静默关闭，算路和所有导航播报照常工作。
+        VoiceWakeManager.shared.requestPermissions { _ in }
+
         // 先把高频播报灌进缓存，再算路
         VoiceManager.shared.prewarm(warmupPhrases)
 

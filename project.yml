@@ -31,6 +31,9 @@ targets:
         NSLocationWhenInUseUsageDescription: 用于导航定位，实时规划路线并在路口给你播报。
         NSLocationAlwaysAndWhenInUseUsageDescription: 锁屏或切到后台也要持续定位，你开车时导航才不会中断。
         NSLocationTemporaryUsageDescriptionDictionary: {}
+        # Phase A：语音唤醒自检所需权限。导航与现有播报不依赖这两项，拒绝后仍可正常使用。
+        NSMicrophoneUsageDescription: 语音唤醒和对话需要使用麦克风
+        NSSpeechRecognitionUsageDescription: 把你说的话转成文字发给因
         # 后台模式：location = 后台持续定位；audio = 后台/锁屏也能播报语音
         UIBackgroundModes:
           - location

@@ -4,6 +4,8 @@ on:
   workflow_dispatch:        # 允许在 GitHub 网页上手动点按钮触发
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]       # Phase 分支必须先过同一套 macOS/iOS 编译，再允许合并
 
 jobs:
   build:

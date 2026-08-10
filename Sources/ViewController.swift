@@ -5,6 +5,9 @@ import UIKit
 final class ViewController: UIViewController {
 
     private let label = UILabel()
+    private let voiceStatusLabel = UILabel()
+    private let voiceTranscriptLabel = UILabel()
+    private var voiceSelfCheckButton: UIButton!
     /// 记住上次剪贴板版本号，只在"有新复制"时才去读（避免每次进前台都弹系统粘贴提示 / 抓到旧内容）。
     private var lastClipboardCount = UIPasteboard.general.changeCount
 
@@ -37,29 +40,55 @@ final class ViewController: UIViewController {
         · 高德里"分享→复制链接" → 切回来我自动认
         """
 
+        voiceStatusLabel.numberOfLines = 0
+        voiceStatusLabel.textAlignment = .center
+        voiceStatusLabel.font = .systemFont(ofSize: 13)
+        voiceStatusLabel.textColor = .secondaryLabel
+
+        voiceTranscriptLabel.numberOfLines = 3
+        voiceTranscriptLabel.textAlignment = .center
+        voiceTranscriptLabel.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
+        voiceTranscriptLabel.textColor = .systemBlue
+
+        voiceSelfCheckButton = makeButton("🎙️ 开始语音唤醒自检", #selector(toggleVoiceSelfCheck))
         let stack = UIStackView(arrangedSubviews: [
+            voiceStatusLabel,
+            voiceTranscriptLabel,
+            voiceSelfCheckButton,
             makeButton("🧭 模拟导航（测因的声音）", #selector(tapSimulate)),
             makeButton("📋 用剪贴板里的高德链接开导", #selector(tapClipboard)),
             makeButton("🔊 试听：前方路口，请右转", #selector(tapTest)),
         ])
         stack.axis = .vertical
-        stack.spacing = 16
+        stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
 
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
+            label.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
             label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             label.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
-            stack.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 40),
+            stack.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 24),
             stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
         ])
 
         // 进前台时检查剪贴板（高德复制→切回来的主路径）
         NotificationCenter.default.addObserver(
             self, selector: #selector(appBecameActive),
             name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(voiceWakeDidUpdate),
+            name: .voiceWakeManagerDidUpdate, object: VoiceWakeManager.shared)
+        refreshVoiceSelfCheck()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // 自检录音绝不带进导航页，避免碰到现有导航播报的音频会话。
+        VoiceWakeManager.shared.stop()
     }
 
     private func makeButton(_ title: String, _ action: Selector) -> UIButton {
@@ -111,6 +140,32 @@ final class ViewController: UIViewController {
     }
 
     // MARK: - 测试按钮
+
+    @objc private func toggleVoiceSelfCheck() {
+        if VoiceWakeManager.shared.isRunning {
+            VoiceWakeManager.shared.stop()
+        } else {
+            VoiceWakeManager.shared.startSelfCheck { [weak self] _ in
+                self?.refreshVoiceSelfCheck()
+            }
+        }
+        refreshVoiceSelfCheck()
+    }
+
+    @objc private func voiceWakeDidUpdate() {
+        refreshVoiceSelfCheck()
+    }
+
+    private func refreshVoiceSelfCheck() {
+        let manager = VoiceWakeManager.shared
+        voiceStatusLabel.text = "语音自检：\(manager.authorizationSummary)\n\(manager.lastEvent)"
+        voiceTranscriptLabel.text = manager.latestTranscript.isEmpty
+            ? "最近识别：—"
+            : "最近识别：\(manager.latestTranscript)"
+        voiceSelfCheckButton?.setTitle(
+            manager.isRunning ? "⏹ 停止语音唤醒自检" : "🎙️ 开始语音唤醒自检",
+            for: .normal)
+    }
 
     @objc private func tapSimulate() {
         // 固定目的地（北京颐和园附近，GCJ-02），室内也能跑一整段模拟导航听因的声音
