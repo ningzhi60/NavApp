@@ -66,9 +66,11 @@ final class NaviViewController: UIViewController {
             locMgr.requestWhenInUseAuthorization()
         }
 
-        // Phase A 只请求语音权限；不在导航中启动收音，也不改变现有播放音频会话。
-        // 权限被拒绝时语音唤醒静默关闭，算路和所有导航播报照常工作。
-        VoiceWakeManager.shared.requestPermissions { _ in }
+        // Phase B：进入导航只设置一次 playAndRecord，全程不在播放/收音之间切 category。
+        // 配置失败或权限拒绝只关闭唤醒监听，现有导航与播放仍可继续。
+        if VoiceManager.shared.beginNavigationAudioSession() {
+            VoiceWakeManager.shared.startNavigationListening()
+        }
 
         // 先把高频播报灌进缓存，再算路
         VoiceManager.shared.prewarm(warmupPhrases)
@@ -132,6 +134,7 @@ final class NaviViewController: UIViewController {
     }
 
     private func teardown() {
+        VoiceWakeManager.shared.stop()
         sayWork?.cancel()
         sayWork = nil
         geocoder.cancelGeocode()
@@ -141,6 +144,7 @@ final class NaviViewController: UIViewController {
         mgr.removeDataRepresentative(driveView)
         mgr.delegate = nil
         VoiceManager.shared.stop()   // 内部也会掐掉碎碎念
+        VoiceManager.shared.endNavigationAudioSession()
     }
 
     // MARK: - 因的实时碎碎念（泊松调度 + 到点现取一句）

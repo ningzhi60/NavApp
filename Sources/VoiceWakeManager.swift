@@ -8,9 +8,14 @@ extension Notification.Name {
 
 /// 语音唤醒状态机的 Phase A 骨架。
 ///
-/// 本阶段只负责：权限、实时转写、唤醒词匹配和自检日志。
-/// 不接入导航对话、不播放应答音，也不修改导航使用的 `.playback` 音频会话。
+/// Phase A 提供权限、实时转写、唤醒词匹配和自检日志；
+/// Phase B 接入导航监听与回声抑制，但仍不发起对话、不播放应答音。
 final class VoiceWakeManager {
+
+    private enum ListeningContext {
+        case selfCheck
+        case navigation
+    }
 
     enum State: String {
         case stopped
@@ -28,6 +33,9 @@ final class VoiceWakeManager {
     private var restartWorkItem: DispatchWorkItem?
     private var recognitionGeneration = UUID()
     private var wakeDetectedInCurrentSegment = false
+    private var listeningContext: ListeningContext?
+    private var outputSuppressed = false
+    private var outputObserver: NSObjectProtocol?
 
     private let wakeWords = [
         "嘤嘤", "宝宝", "老公", "茵茵", "因因",
@@ -40,7 +48,15 @@ final class VoiceWakeManager {
     private(set) var lastEvent = "尚未开始自检"
     private(set) var isRunning = false
 
-    private init() {}
+    private init() {
+        outputObserver = NotificationCenter.default.addObserver(
+            forName: .voiceManagerOutputStateDidChange,
+            object: VoiceManager.shared,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleOutputStateChange()
+        }
+    }
 
     var authorizationSummary: String {
         let speech: String
@@ -109,7 +125,7 @@ final class VoiceWakeManager {
             }
 
             do {
-                try self.beginSelfCheckAudio()
+                try self.beginAudio(context: .selfCheck)
                 self.lastEvent = "监听中：可喊「嘤嘤 / 宝宝 / 老公 / 茵茵 / 因因」"
                 self.publishUpdate()
                 completion(true)
@@ -122,10 +138,30 @@ final class VoiceWakeManager {
         }
     }
 
+    /// Phase B：导航已先固定为 `.playAndRecord`；这里只挂输入 tap，不再切 category。
+    func startNavigationListening() {
+        guard !isRunning else { return }
+        requestPermissions { [weak self] granted in
+            guard let self = self, granted else { return }
+            do {
+                try self.beginAudio(context: .navigation)
+                self.lastEvent = "导航唤醒监听中"
+                self.publishUpdate()
+            } catch {
+                self.stop()
+                self.lastEvent = "导航唤醒监听启动失败：\(error.localizedDescription)"
+                self.publishUpdate()
+            }
+        }
+    }
+
     func stop() {
         guard isRunning || audioEngine.isRunning else { return }
+        let context = listeningContext
         isRunning = false
         state = .stopped
+        listeningContext = nil
+        outputSuppressed = false
         restartWorkItem?.cancel()
         restartWorkItem = nil
         recognitionGeneration = UUID()
@@ -135,18 +171,23 @@ final class VoiceWakeManager {
         recognitionRequest = nil
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-        lastEvent = "自检已停止"
+        if context == .selfCheck {
+            try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        }
+        lastEvent = context == .navigation ? "导航唤醒监听已停止" : "自检已停止"
         publishUpdate()
     }
 
-    private func beginSelfCheckAudio() throws {
-        // 只供首页自检。这里刻意不动 VoiceManager 的导航 `.playback` 配置。
+    private func beginAudio(context: ListeningContext) throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .measurement)
-        try session.setActive(true)
+        if context == .selfCheck {
+            // 首页自检仍使用临时录音会话；导航 category 只由 VoiceManager 生命周期持有。
+            try session.setCategory(.record, mode: .measurement)
+            try session.setActive(true)
+        }
 
         isRunning = true
+        listeningContext = context
         state = .idle
         latestTranscript = ""
         wakeDetectedInCurrentSegment = false
@@ -162,7 +203,7 @@ final class VoiceWakeManager {
     }
 
     private func startRecognitionCycle() {
-        guard isRunning, let recognizer = recognizer else { return }
+        guard isRunning, !outputSuppressed, let recognizer = recognizer else { return }
 
         restartWorkItem?.cancel()
         recognitionRequest?.endAudio()
@@ -199,6 +240,7 @@ final class VoiceWakeManager {
     }
 
     private func consume(_ transcript: String) {
+        if VoiceManager.shared.isAudioOutputActive || outputSuppressed { return }
         let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
         latestTranscript = cleaned
@@ -234,5 +276,37 @@ final class VoiceWakeManager {
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .voiceWakeManagerDidUpdate, object: self)
         }
+    }
+
+    /// 播放开始就取消并清空当前识别段；播放结束 300ms 后从全新识别段恢复。
+    private func handleOutputStateChange() {
+        guard isRunning else { return }
+        if VoiceManager.shared.isAudioOutputActive {
+            guard !outputSuppressed else { return }
+            outputSuppressed = true
+            restartWorkItem?.cancel()
+            recognitionGeneration = UUID()
+            recognitionRequest?.endAudio()
+            recognitionTask?.cancel()
+            recognitionRequest = nil
+            recognitionTask = nil
+            lastEvent = "播报期间已暂停唤醒匹配"
+            publishUpdate()
+            return
+        }
+
+        guard outputSuppressed else { return }
+        outputSuppressed = false
+        lastEvent = "播报结束，300ms 后恢复监听"
+        publishUpdate()
+        let generation = recognitionGeneration
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self,
+                  self.isRunning,
+                  generation == self.recognitionGeneration else { return }
+            self.startRecognitionCycle()
+        }
+        restartWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 }
