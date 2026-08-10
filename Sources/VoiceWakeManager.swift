@@ -29,7 +29,11 @@ final class VoiceWakeManager {
     private var recognitionGeneration = UUID()
     private var wakeDetectedInCurrentSegment = false
 
-    private let wakeWords = ["因因", "茵茵", "音音", "阴阴", "銀銀"]
+    private let wakeWords = [
+        "嘤嘤", "宝宝", "老公", "茵茵", "因因",
+        // Apple 中文识别常见同音结果，继续作为兜底。
+        "音音", "阴阴", "銀銀",
+    ]
 
     private(set) var state: State = .stopped
     private(set) var latestTranscript = ""
@@ -106,7 +110,7 @@ final class VoiceWakeManager {
 
             do {
                 try self.beginSelfCheckAudio()
-                self.lastEvent = "监听中：请说话，或喊「因因」"
+                self.lastEvent = "监听中：可喊「嘤嘤 / 宝宝 / 老公 / 茵茵 / 因因」"
                 self.publishUpdate()
                 completion(true)
             } catch {
