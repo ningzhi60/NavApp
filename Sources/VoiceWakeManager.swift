@@ -45,6 +45,8 @@ final class VoiceWakeManager {
     private var chatSessionId = ""
     private var isFollowUpWindow = false
     private let chatEndpoint = "https://calendar.45.32.43.224.sslip.io/nav/api/chat"
+    private let enabledDefaultsKey = "voiceConversationEnabled"
+    private let acknowledgementText = "嗯？"
 
     private let wakeWords = [
         "嘤嘤", "宝宝", "老公", "茵茵", "因因",
@@ -56,6 +58,13 @@ final class VoiceWakeManager {
     private(set) var latestTranscript = ""
     private(set) var lastEvent = "尚未开始自检"
     private(set) var isRunning = false
+
+    /// Phase D 总开关。首次安装默认开启；用户关闭后持久保存，后续导航不再申请录音或启动识别。
+    var isVoiceConversationEnabled: Bool {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: enabledDefaultsKey) != nil else { return true }
+        return defaults.bool(forKey: enabledDefaultsKey)
+    }
 
     private init() {
         outputObserver = NotificationCenter.default.addObserver(
@@ -89,6 +98,17 @@ final class VoiceWakeManager {
         return "麦克风：\(microphone) · 语音识别：\(speech) · \(recognitionMode)"
     }
 
+    func setVoiceConversationEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: enabledDefaultsKey)
+        if enabled {
+            lastEvent = "语音对话已开启，进入导航后开始监听"
+        } else {
+            stop()
+            lastEvent = "语音对话已关闭（导航播报不受影响）"
+        }
+        publishUpdate()
+    }
+
     /// 首次进入导航页或启动自检时调用。拒绝权限只关闭语音唤醒，不影响导航。
     func requestPermissions(completion: @escaping (Bool) -> Void) {
         let group = DispatchGroup()
@@ -116,6 +136,12 @@ final class VoiceWakeManager {
     /// 首页真机自检入口。使用临时 `.record` 会话，仅在自检期间生效。
     /// Phase B 才会把导航全程会话改为 `.playAndRecord` 并回归现有三条播放路径。
     func startSelfCheck(completion: @escaping (Bool) -> Void) {
+        guard isVoiceConversationEnabled else {
+            lastEvent = "语音对话总开关已关闭"
+            publishUpdate()
+            completion(false)
+            return
+        }
         guard !isRunning else { completion(true); return }
 
         requestPermissions { [weak self] granted in
@@ -149,6 +175,11 @@ final class VoiceWakeManager {
 
     /// Phase B：导航已先固定为 `.playAndRecord`；这里只挂输入 tap，不再切 category。
     func startNavigationListening() {
+        guard isVoiceConversationEnabled else {
+            lastEvent = "语音对话已关闭（导航播报正常）"
+            publishUpdate()
+            return
+        }
         guard !isRunning else { return }
         chatSessionId = UUID().uuidString
         requestPermissions { [weak self] granted in
@@ -276,7 +307,8 @@ final class VoiceWakeManager {
            let matched = wakeWords.first(where: { tail.contains($0) }) {
             wakeDetectedInCurrentSegment = true
             if listeningContext == .navigation {
-                beginListening(followUp: false, matchedWakeWord: matched)
+                beginListening(followUp: false, matchedWakeWord: matched,
+                               playAcknowledgement: true)
             } else {
                 lastEvent = "✅ 唤醒词命中：\(matched)"
             }
@@ -290,7 +322,8 @@ final class VoiceWakeManager {
         publishUpdate()
     }
 
-    private func beginListening(followUp: Bool, matchedWakeWord: String? = nil) {
+    private func beginListening(followUp: Bool, matchedWakeWord: String? = nil,
+                                playAcknowledgement: Bool = false) {
         silenceWorkItem?.cancel()
         listeningTimeoutWorkItem?.cancel()
         state = .listening
@@ -300,9 +333,31 @@ final class VoiceWakeManager {
         latestTranscript = ""
         lastEvent = followUp
             ? "可继续说，5 秒内不用再喊唤醒词"
-            : "✅ 唤醒词命中：\(matchedWakeWord ?? "")，正在听你说"
+            : (playAcknowledgement
+                ? "✅ 唤醒词命中：\(matchedWakeWord ?? "")，因在回应"
+                : "✅ 唤醒词命中：\(matchedWakeWord ?? "")，正在听你说")
         publishUpdate()
 
+        // Phase D：首次唤醒先用已预热的克隆音回应“嗯？”。播放期间沿用 Phase B 的
+        // 回声抑制，结束后 handleOutputStateChange 会用全新识别段正式收问题。
+        if playAcknowledgement {
+            pauseRecognition()
+            VoiceManager.shared.speakChatter(acknowledgementText) { [weak self] played in
+                guard let self = self,
+                      self.state == .listening,
+                      !played,
+                      !self.outputSuppressed else { return }
+                // 合成或播放失败时静默继续听，不能让一个提示音拖垮语音对话。
+                self.beginListening(followUp: false)
+                self.scheduleRestart(after: 0.3, generation: self.recognitionGeneration)
+            }
+            return
+        }
+
+        armListeningTimeout(followUp: followUp)
+    }
+
+    private func armListeningTimeout(followUp: Bool) {
         let timeout = followUp ? 5.0 : 8.0
         let work = DispatchWorkItem { [weak self] in
             guard let self = self, self.state == .listening else { return }

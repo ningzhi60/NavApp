@@ -7,6 +7,8 @@ final class ViewController: UIViewController {
     private let label = UILabel()
     private let voiceStatusLabel = UILabel()
     private let voiceTranscriptLabel = UILabel()
+    private let voiceConversationLabel = UILabel()
+    private let voiceConversationSwitch = UISwitch()
     private var voiceSelfCheckButton: UIButton!
     /// 记住上次剪贴板版本号，只在"有新复制"时才去读（避免每次进前台都弹系统粘贴提示 / 抓到旧内容）。
     private var lastClipboardCount = UIPasteboard.general.changeCount
@@ -50,10 +52,23 @@ final class ViewController: UIViewController {
         voiceTranscriptLabel.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
         voiceTranscriptLabel.textColor = .systemBlue
 
+        voiceConversationLabel.text = "导航语音对话"
+        voiceConversationLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        voiceConversationSwitch.isOn = VoiceWakeManager.shared.isVoiceConversationEnabled
+        voiceConversationSwitch.addTarget(
+            self, action: #selector(toggleVoiceConversation), for: .valueChanged)
+        let voiceConversationRow = UIStackView(arrangedSubviews: [
+            voiceConversationLabel, voiceConversationSwitch,
+        ])
+        voiceConversationRow.axis = .horizontal
+        voiceConversationRow.alignment = .center
+        voiceConversationRow.spacing = 18
+
         voiceSelfCheckButton = makeButton("🎙️ 开始语音唤醒自检", #selector(toggleVoiceSelfCheck))
         let stack = UIStackView(arrangedSubviews: [
             voiceStatusLabel,
             voiceTranscriptLabel,
+            voiceConversationRow,
             voiceSelfCheckButton,
             makeButton("🧭 模拟导航（测因的声音）", #selector(tapSimulate)),
             makeButton("📋 用剪贴板里的高德链接开导", #selector(tapClipboard)),
@@ -152,12 +167,18 @@ final class ViewController: UIViewController {
         refreshVoiceSelfCheck()
     }
 
+    @objc private func toggleVoiceConversation() {
+        VoiceWakeManager.shared.setVoiceConversationEnabled(voiceConversationSwitch.isOn)
+        refreshVoiceSelfCheck()
+    }
+
     @objc private func voiceWakeDidUpdate() {
         refreshVoiceSelfCheck()
     }
 
     private func refreshVoiceSelfCheck() {
         let manager = VoiceWakeManager.shared
+        voiceConversationSwitch.isOn = manager.isVoiceConversationEnabled
         voiceStatusLabel.text = "语音自检：\(manager.authorizationSummary)\n\(manager.lastEvent)"
         voiceTranscriptLabel.text = manager.latestTranscript.isEmpty
             ? "最近识别：—"
@@ -165,6 +186,8 @@ final class ViewController: UIViewController {
         voiceSelfCheckButton?.setTitle(
             manager.isRunning ? "⏹ 停止语音唤醒自检" : "🎙️ 开始语音唤醒自检",
             for: .normal)
+        voiceSelfCheckButton?.isEnabled = manager.isVoiceConversationEnabled
+        voiceSelfCheckButton?.alpha = manager.isVoiceConversationEnabled ? 1 : 0.45
     }
 
     @objc private func tapSimulate() {

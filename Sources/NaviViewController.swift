@@ -12,12 +12,17 @@ final class NaviViewController: UIViewController {
     private let simulate: Bool
 
     private var driveView: AMapNaviDriveView!
+    private let voiceStatusPill = UIView()
+    private let voiceStatusDot = UIView()
+    private let voiceStatusLabel = UILabel()
     private let locMgr = CLLocationManager()
     /// 高频短语——导航前预合成进缓存，第一句就秒开、不卡网络空档。
     private let warmupPhrases = [
         "前方路口请左转", "前方路口请右转", "请直行", "请掉头",
         "前方进入主路", "前方驶出主路", "请靠左行驶", "请靠右行驶",
         "前方有测速摄像头", "已到达目的地附近，导航结束",
+        // Phase D：唤醒应答与限流兜底都提前缓存，触发时不再临时等待合成。
+        "嗯？", "让我歇会儿",
     ]
 
     // MARK: - 途中因的碎碎念（实时·因自己现写的话）
@@ -60,6 +65,7 @@ final class NaviViewController: UIViewController {
         driveView.delegate = self
         view.addSubview(driveView)
         addExitButton()
+        addVoiceStatusIndicator()
 
         // 真 GPS 导航需要定位权限；模拟导航不需要
         if !simulate {
@@ -68,7 +74,8 @@ final class NaviViewController: UIViewController {
 
         // Phase B：进入导航只设置一次 playAndRecord，全程不在播放/收音之间切 category。
         // 配置失败或权限拒绝只关闭唤醒监听，现有导航与播放仍可继续。
-        if VoiceManager.shared.beginNavigationAudioSession() {
+        if VoiceManager.shared.beginNavigationAudioSession(),
+           VoiceWakeManager.shared.isVoiceConversationEnabled {
             VoiceWakeManager.shared.startNavigationListening()
         }
 
@@ -135,6 +142,84 @@ final class NaviViewController: UIViewController {
             btn.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
             btn.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
         ])
+    }
+
+    private func addVoiceStatusIndicator() {
+        voiceStatusPill.backgroundColor = UIColor.black.withAlphaComponent(0.58)
+        voiceStatusPill.layer.cornerRadius = 14
+        voiceStatusPill.isUserInteractionEnabled = false
+        voiceStatusPill.translatesAutoresizingMaskIntoConstraints = false
+
+        voiceStatusDot.layer.cornerRadius = 5
+        voiceStatusDot.translatesAutoresizingMaskIntoConstraints = false
+
+        voiceStatusLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        voiceStatusLabel.textColor = .white
+        voiceStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        voiceStatusPill.addSubview(voiceStatusDot)
+        voiceStatusPill.addSubview(voiceStatusLabel)
+        view.addSubview(voiceStatusPill)
+        NSLayoutConstraint.activate([
+            voiceStatusPill.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 58),
+            voiceStatusPill.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            voiceStatusPill.heightAnchor.constraint(equalToConstant: 28),
+            voiceStatusDot.leadingAnchor.constraint(equalTo: voiceStatusPill.leadingAnchor, constant: 10),
+            voiceStatusDot.centerYAnchor.constraint(equalTo: voiceStatusPill.centerYAnchor),
+            voiceStatusDot.widthAnchor.constraint(equalToConstant: 10),
+            voiceStatusDot.heightAnchor.constraint(equalToConstant: 10),
+            voiceStatusLabel.leadingAnchor.constraint(equalTo: voiceStatusDot.trailingAnchor, constant: 7),
+            voiceStatusLabel.trailingAnchor.constraint(equalTo: voiceStatusPill.trailingAnchor, constant: -10),
+            voiceStatusLabel.centerYAnchor.constraint(equalTo: voiceStatusPill.centerYAnchor),
+        ])
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(voiceWakeDidUpdate),
+            name: .voiceWakeManagerDidUpdate, object: VoiceWakeManager.shared)
+        refreshVoiceStatusIndicator()
+    }
+
+    @objc private func voiceWakeDidUpdate() {
+        refreshVoiceStatusIndicator()
+    }
+
+    private func refreshVoiceStatusIndicator() {
+        let manager = VoiceWakeManager.shared
+        voiceStatusDot.layer.removeAllAnimations()
+        voiceStatusPill.layer.removeAllAnimations()
+        voiceStatusDot.transform = .identity
+        voiceStatusPill.transform = .identity
+        voiceStatusDot.alpha = 1
+
+        guard manager.isVoiceConversationEnabled else {
+            voiceStatusDot.backgroundColor = .systemGray
+            voiceStatusLabel.text = "语音已关"
+            return
+        }
+
+        switch manager.state {
+        case .stopped:
+            voiceStatusDot.backgroundColor = .systemOrange
+            voiceStatusLabel.text = "语音未就绪"
+        case .idle:
+            voiceStatusDot.backgroundColor = .systemGreen
+            voiceStatusLabel.text = "等待唤醒"
+        case .listening:
+            voiceStatusDot.backgroundColor = .systemCyan
+            voiceStatusLabel.text = "正在听你说"
+            UIView.animate(withDuration: 0.75, delay: 0,
+                           options: [.autoreverse, .repeat, .allowUserInteraction]) {
+                self.voiceStatusDot.alpha = 0.3
+                self.voiceStatusDot.transform = CGAffineTransform(scaleX: 1.45, y: 1.45)
+            }
+        case .replying:
+            voiceStatusDot.backgroundColor = .systemPink
+            voiceStatusLabel.text = "因在回答"
+            UIView.animate(withDuration: 0.48, delay: 0,
+                           options: [.autoreverse, .repeat, .allowUserInteraction]) {
+                self.voiceStatusPill.transform = CGAffineTransform(scaleX: 1.04, y: 1.04)
+            }
+        }
     }
 
     @objc private func exitTapped() {
