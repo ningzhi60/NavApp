@@ -16,6 +16,11 @@ final class NaviViewController: UIViewController {
     private let voiceStatusDot = UIView()
     private let voiceStatusLabel = UILabel()
     private let locMgr = CLLocationManager()
+    /// Real-device GPS can still be cold when route calculation finishes.
+    private var gpsStartRetryWork: DispatchWorkItem?
+    private var gpsStartAttempts = 0
+    private var navigationStarted = false
+    private let gpsStartMaxAttempts = 9
     /// 高频短语——导航前预合成进缓存，第一句就秒开、不卡网络空档。
     private let warmupPhrases = [
         "前方路口请左转", "前方路口请右转", "请直行", "请掉头",
@@ -69,7 +74,11 @@ final class NaviViewController: UIViewController {
 
         // 真 GPS 导航需要定位权限；模拟导航不需要
         if !simulate {
+            locMgr.delegate = self
+            locMgr.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+            locMgr.distanceFilter = kCLDistanceFilterNone
             locMgr.requestWhenInUseAuthorization()
+            locMgr.startUpdatingLocation()
         }
 
         // Phase B：进入导航只设置一次 playAndRecord，全程不在播放/收音之间切 category。
@@ -228,6 +237,9 @@ final class NaviViewController: UIViewController {
 
     private func teardown() {
         VoiceWakeManager.shared.stop()
+        gpsStartRetryWork?.cancel()
+        gpsStartRetryWork = nil
+        navigationStarted = false
         sayWork?.cancel()
         sayWork = nil
         geocoder.cancelGeocode()
@@ -341,6 +353,49 @@ final class NaviViewController: UIViewController {
         present(a, animated: true)
     }
 
+    /// Retry a real GPS navigation start while Core Location obtains its first fix.
+    /// Never falls back to emulator navigation on a real trip.
+    private func attemptStartGPSNavigation(_ driveManager: AMapNaviDriveManager) {
+        guard !simulate, !navigationStarted else { return }
+        gpsStartRetryWork?.cancel()
+        gpsStartRetryWork = nil
+        gpsStartAttempts += 1
+
+        if driveManager.startGPSNavi() {
+            navigationStarted = true
+            startYinSay()
+            return
+        }
+
+        guard gpsStartAttempts < gpsStartMaxAttempts else {
+            let message: String
+            if let location = lastLocation {
+                if let requestedStart = request.start {
+                    let start = CLLocation(latitude: requestedStart.lat, longitude: requestedStart.lng)
+                    let distance = location.distance(from: start)
+                    if distance > 500 {
+                        message = String(format: "当前位置距离所选起点约 %.1f 公里，请到起点附近后重试", distance / 1000)
+                    } else {
+                        message = "卫星信号仍未就绪，请到开阔处稍等后重试"
+                    }
+                } else {
+                    message = "卫星信号仍未就绪，请到开阔处稍等后重试"
+                }
+            } else {
+                message = "暂时没有取得 GPS 定位，请到开阔处稍等后重试"
+            }
+            showFatal(message)
+            return
+        }
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, !self.navigationStarted else { return }
+            self.attemptStartGPSNavigation(driveManager)
+        }
+        gpsStartRetryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+    }
+
     /// 兜底：拉起官方高德 App 导到同一目的地（我们这条路走不了时的保命出口）。
     private func openInAmap() {
         let name = (request.dest.name ?? "目的地").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "目的地"
@@ -367,17 +422,22 @@ final class NaviViewController: UIViewController {
 extension NaviViewController: AMapNaviDriveManagerDelegate {
 
     func driveManager(onCalculateRouteSuccess driveManager: AMapNaviDriveManager) {
-        let started = simulate ? driveManager.startEmulatorNavi() : driveManager.startGPSNavi()
-        if !started { showFatal("导航没能启动"); return }
-        startYinSay()
-        // 真实驾驶：自己也收一路定位，留最近一个点，供开口时反查「现在路过哪儿」
-        if !simulate {
-            locMgr.delegate = self
-            locMgr.startUpdatingLocation()
+        if simulate {
+            guard driveManager.startEmulatorNavi() else {
+                showFatal("导航没能启动")
+                return
+            }
+            navigationStarted = true
+            startYinSay()
+        } else {
+            gpsStartAttempts = 0
+            attemptStartGPSNavigation(driveManager)
         }
     }
 
     func driveManager(_ driveManager: AMapNaviDriveManager, onCalculateRouteFailure error: Error) {
+        gpsStartRetryWork?.cancel()
+        gpsStartRetryWork = nil
         showFatal("算路失败：\(error.localizedDescription)")
     }
 

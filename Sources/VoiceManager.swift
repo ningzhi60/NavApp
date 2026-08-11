@@ -26,6 +26,9 @@ final class VoiceManager: NSObject {
     /// MiniMax 合成超时（秒）。HD 合成一句常要 1~2s，给足余量；导航高频短语走缓存是秒开。
     /// 超时即退回系统音——车里最多等这么久，不会长时间哑巴。
     private let synthTimeout: TimeInterval = 6.0
+    /// Active voice replies are longer than turn prompts, so they get more synthesis time.
+    /// Navigation prompts keep the six-second failover window for safety.
+    private let chatterSynthTimeout: TimeInterval = 12.0
     /// 「正在忙」标志：从收到 speak 请求（含网络合成那段空档）起为 true，直到真正播完/兜底播完。
     /// 高德的 driveManagerIsNaviSoundPlaying 靠它判断——忙就别急着发下一句，避免抢播。
     private var busy = false
@@ -142,7 +145,7 @@ final class VoiceManager: NSObject {
         if let data = cachedAudio(for: text) {
             playChatter(data, requestId: requestId)
         } else {
-            synthesize(text: text) { [weak self] data in
+            synthesize(text: text, timeout: chatterSynthTimeout) { [weak self] data in
                 guard let self = self, requestId == self.chatterRequestId else { return }
                 guard let data = data, !data.isEmpty else {
                     self.finishChatter(success: false)
@@ -200,7 +203,8 @@ final class VoiceManager: NSObject {
 
     // MARK: - MiniMax 合成
 
-    private func synthesize(text: String, completion: @escaping (Data?) -> Void) {
+    private func synthesize(text: String, timeout: TimeInterval? = nil,
+                            completion: @escaping (Data?) -> Void) {
         guard !Secrets.minimaxApiKey.isEmpty,
               !Secrets.minimaxGroupId.isEmpty,
               !Secrets.minimaxVoiceId.isEmpty else {
@@ -216,7 +220,7 @@ final class VoiceManager: NSObject {
         let speed = Double(Secrets.minimaxSpeed) ?? 1.0
         let model = Secrets.minimaxModel.isEmpty ? "speech-02-hd" : Secrets.minimaxModel
 
-        var req = URLRequest(url: url, timeoutInterval: synthTimeout)
+        var req = URLRequest(url: url, timeoutInterval: timeout ?? synthTimeout)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(Secrets.minimaxApiKey)", forHTTPHeaderField: "Authorization")
