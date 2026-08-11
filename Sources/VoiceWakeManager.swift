@@ -34,6 +34,7 @@ final class VoiceWakeManager {
     private var restartWorkItem: DispatchWorkItem?
     private var silenceWorkItem: DispatchWorkItem?
     private var listeningTimeoutWorkItem: DispatchWorkItem?
+    private var replyTimeoutWorkItem: DispatchWorkItem?
     private var recognitionGeneration = UUID()
     private var wakeDetectedInCurrentSegment = false
     private var listeningContext: ListeningContext?
@@ -177,6 +178,8 @@ final class VoiceWakeManager {
         silenceWorkItem = nil
         listeningTimeoutWorkItem?.cancel()
         listeningTimeoutWorkItem = nil
+        replyTimeoutWorkItem?.cancel()
+        replyTimeoutWorkItem = nil
         capturedCommand = ""
         lastListeningTranscript = ""
         isFollowUpWindow = false
@@ -353,9 +356,19 @@ final class VoiceWakeManager {
         lastEvent = "已听到，正在等因回答"
         publishUpdate()
 
+        replyTimeoutWorkItem?.cancel()
+        let timeoutWork = DispatchWorkItem { [weak self] in
+            guard let self = self, self.state == .replying else { return }
+            self.returnToIdle(event: "回答超时，已恢复唤醒监听")
+        }
+        replyTimeoutWorkItem = timeoutWork
+        DispatchQueue.main.asyncAfter(deadline: .now() + 19, execute: timeoutWork)
+
         fetchReply(text: text) { [weak self] reply in
             DispatchQueue.main.async {
                 guard let self = self, self.state == .replying else { return }
+                self.replyTimeoutWorkItem?.cancel()
+                self.replyTimeoutWorkItem = nil
                 guard let reply = reply, !reply.isEmpty else {
                     self.returnToIdle(event: "对话暂时没接通，恢复唤醒监听")
                     return
@@ -387,7 +400,7 @@ final class VoiceWakeManager {
               let body = try? JSONSerialization.data(withJSONObject: [
                 "text": text, "sid": chatSessionId, "ts": ts, "sig": sig,
               ]) else { completion(nil); return }
-        var request = URLRequest(url: url, timeoutInterval: 20)
+        var request = URLRequest(url: url, timeoutInterval: 19)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
@@ -406,8 +419,11 @@ final class VoiceWakeManager {
         lastListeningTranscript = ""
         silenceWorkItem?.cancel()
         listeningTimeoutWorkItem?.cancel()
+        replyTimeoutWorkItem?.cancel()
+        replyTimeoutWorkItem = nil
         lastEvent = event
         publishUpdate()
+        pauseRecognition()
         if !outputSuppressed {
             scheduleRestart(after: 0.3, generation: recognitionGeneration)
         }
