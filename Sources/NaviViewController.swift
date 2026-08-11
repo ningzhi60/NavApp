@@ -188,6 +188,8 @@ final class NaviViewController: UIViewController {
     /// 到点了：导航没在播报就现取一句因的话来说；不管成不成，都排下一次。
     private func fireSay() {
         defer { scheduleNextSay(first: false) }
+        // 主动语音对话期间暂停碎碎念；本次直接挪到下一次随机时刻。
+        guard VoiceWakeManager.shared.state == .idle else { return }
         guard !saying, !VoiceManager.shared.isSpeaking else { return }  // 让路给转向播报
         saying = true
         let dest = request.dest.name ?? "目的地"

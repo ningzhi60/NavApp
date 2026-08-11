@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import CryptoKit
 import Speech
 
 extension Notification.Name {
@@ -9,7 +10,7 @@ extension Notification.Name {
 /// 语音唤醒状态机的 Phase A 骨架。
 ///
 /// Phase A 提供权限、实时转写、唤醒词匹配和自检日志；
-/// Phase B 接入导航监听与回声抑制，但仍不发起对话、不播放应答音。
+/// Phase B 接入导航监听与回声抑制；Phase C 打通听写、服务端对话、克隆音回答与追问窗口。
 final class VoiceWakeManager {
 
     private enum ListeningContext {
@@ -31,11 +32,18 @@ final class VoiceWakeManager {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var restartWorkItem: DispatchWorkItem?
+    private var silenceWorkItem: DispatchWorkItem?
+    private var listeningTimeoutWorkItem: DispatchWorkItem?
     private var recognitionGeneration = UUID()
     private var wakeDetectedInCurrentSegment = false
     private var listeningContext: ListeningContext?
     private var outputSuppressed = false
     private var outputObserver: NSObjectProtocol?
+    private var capturedCommand = ""
+    private var lastListeningTranscript = ""
+    private var chatSessionId = ""
+    private var isFollowUpWindow = false
+    private let chatEndpoint = "https://calendar.45.32.43.224.sslip.io/nav/api/chat"
 
     private let wakeWords = [
         "嘤嘤", "宝宝", "老公", "茵茵", "因因",
@@ -141,6 +149,7 @@ final class VoiceWakeManager {
     /// Phase B：导航已先固定为 `.playAndRecord`；这里只挂输入 tap，不再切 category。
     func startNavigationListening() {
         guard !isRunning else { return }
+        chatSessionId = UUID().uuidString
         requestPermissions { [weak self] granted in
             guard let self = self, granted else { return }
             do {
@@ -164,6 +173,14 @@ final class VoiceWakeManager {
         outputSuppressed = false
         restartWorkItem?.cancel()
         restartWorkItem = nil
+        silenceWorkItem?.cancel()
+        silenceWorkItem = nil
+        listeningTimeoutWorkItem?.cancel()
+        listeningTimeoutWorkItem = nil
+        capturedCommand = ""
+        lastListeningTranscript = ""
+        isFollowUpWindow = false
+        chatSessionId = ""
         recognitionGeneration = UUID()
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
@@ -245,19 +262,164 @@ final class VoiceWakeManager {
         guard !cleaned.isEmpty else { return }
         latestTranscript = cleaned
 
+        if state == .listening {
+            consumeListening(cleaned)
+            return
+        }
+        if state == .replying { return }
+
         let tail = String(cleaned.suffix(10))
         if !wakeDetectedInCurrentSegment,
            let matched = wakeWords.first(where: { tail.contains($0) }) {
             wakeDetectedInCurrentSegment = true
-            lastEvent = "✅ 唤醒词命中：\(matched)"
-            NSLog("[VoiceWake][Phase A] wake word detected: %@", matched)
+            if listeningContext == .navigation {
+                beginListening(followUp: false, matchedWakeWord: matched)
+            } else {
+                lastEvent = "✅ 唤醒词命中：\(matched)"
+            }
+            NSLog("[VoiceWake] wake word detected: %@", matched)
             publishUpdate()
-            scheduleRestart(after: 0.6, generation: recognitionGeneration)
+            scheduleRestart(after: 0.25, generation: recognitionGeneration)
             return
         }
 
         lastEvent = "正在实时转写"
         publishUpdate()
+    }
+
+    private func beginListening(followUp: Bool, matchedWakeWord: String? = nil) {
+        silenceWorkItem?.cancel()
+        listeningTimeoutWorkItem?.cancel()
+        state = .listening
+        isFollowUpWindow = followUp
+        capturedCommand = ""
+        lastListeningTranscript = ""
+        latestTranscript = ""
+        lastEvent = followUp
+            ? "可继续说，5 秒内不用再喊唤醒词"
+            : "✅ 唤醒词命中：\(matchedWakeWord ?? "")，正在听你说"
+        publishUpdate()
+
+        let timeout = followUp ? 5.0 : 8.0
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, self.state == .listening else { return }
+            if self.capturedCommand.isEmpty {
+                self.returnToIdle(event: followUp ? "追问窗口结束，恢复唤醒监听" : "没听到问题，恢复唤醒监听")
+            } else {
+                self.submitCapturedCommand()
+            }
+        }
+        listeningTimeoutWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
+    }
+
+    private func consumeListening(_ transcript: String) {
+        var command = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 识别任务切段前偶尔仍会把唤醒词带进下一段，避免把它发给服务端。
+        if !isFollowUpWindow,
+           let word = wakeWords.first(where: { command.hasPrefix($0) }) {
+            command.removeFirst(word.count)
+            command = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !command.isEmpty, command != lastListeningTranscript else { return }
+        capturedCommand = command
+        lastListeningTranscript = command
+        latestTranscript = command
+        lastEvent = "正在听：\(command)"
+        publishUpdate()
+
+        silenceWorkItem?.cancel()
+        let snapshot = command
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self,
+                  self.state == .listening,
+                  self.capturedCommand == snapshot else { return }
+            self.submitCapturedCommand()
+        }
+        silenceWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
+    }
+
+    private func submitCapturedCommand() {
+        let text = capturedCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard state == .listening, !text.isEmpty else {
+            returnToIdle(event: "没听清，恢复唤醒监听")
+            return
+        }
+        state = .replying
+        silenceWorkItem?.cancel()
+        listeningTimeoutWorkItem?.cancel()
+        pauseRecognition()
+        lastEvent = "已听到，正在等因回答"
+        publishUpdate()
+
+        fetchReply(text: text) { [weak self] reply in
+            DispatchQueue.main.async {
+                guard let self = self, self.state == .replying else { return }
+                guard let reply = reply, !reply.isEmpty else {
+                    self.returnToIdle(event: "对话暂时没接通，恢复唤醒监听")
+                    return
+                }
+                self.lastEvent = "因正在回答"
+                self.publishUpdate()
+                VoiceManager.shared.speakChatter(reply) { [weak self] played in
+                    guard let self = self, self.state == .replying else { return }
+                    if played {
+                        self.beginListening(followUp: true)
+                        if !self.outputSuppressed {
+                            self.scheduleRestart(after: 0.3, generation: self.recognitionGeneration)
+                        }
+                    } else {
+                        self.returnToIdle(event: "回答已让路给导航播报，恢复唤醒监听")
+                    }
+                }
+            }
+        }
+    }
+
+    private func fetchReply(text: String, completion: @escaping (String?) -> Void) {
+        guard !chatSessionId.isEmpty else { completion(nil); return }
+        let ts = String(Int(Date().timeIntervalSince1970))
+        let key = SymmetricKey(data: Data(Secrets.minimaxApiKey.utf8))
+        let mac = HMAC<SHA256>.authenticationCode(for: Data(ts.utf8), using: key)
+        let sig = mac.map { String(format: "%02x", $0) }.joined()
+        guard let url = URL(string: chatEndpoint),
+              let body = try? JSONSerialization.data(withJSONObject: [
+                "text": text, "sid": chatSessionId, "ts": ts, "sig": sig,
+              ]) else { completion(nil); return }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            guard error == nil, let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let reply = json["reply"] as? String else { completion(nil); return }
+            completion(reply.trimmingCharacters(in: .whitespacesAndNewlines))
+        }.resume()
+    }
+
+    private func returnToIdle(event: String) {
+        state = .idle
+        isFollowUpWindow = false
+        capturedCommand = ""
+        lastListeningTranscript = ""
+        silenceWorkItem?.cancel()
+        listeningTimeoutWorkItem?.cancel()
+        lastEvent = event
+        publishUpdate()
+        if !outputSuppressed {
+            scheduleRestart(after: 0.3, generation: recognitionGeneration)
+        }
+    }
+
+    private func pauseRecognition() {
+        restartWorkItem?.cancel()
+        recognitionGeneration = UUID()
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        recognitionRequest = nil
+        recognitionTask = nil
     }
 
     private func scheduleRestart(after delay: TimeInterval, generation: UUID) {
@@ -284,6 +446,12 @@ final class VoiceWakeManager {
         if VoiceManager.shared.isAudioOutputActive {
             guard !outputSuppressed else { return }
             outputSuppressed = true
+            silenceWorkItem?.cancel()
+            listeningTimeoutWorkItem?.cancel()
+            if state == .listening {
+                capturedCommand = ""
+                lastListeningTranscript = ""
+            }
             restartWorkItem?.cancel()
             recognitionGeneration = UUID()
             recognitionRequest?.endAudio()
@@ -299,6 +467,10 @@ final class VoiceWakeManager {
         outputSuppressed = false
         lastEvent = "播报结束，300ms 后恢复监听"
         publishUpdate()
+        if state == .replying { return }
+        if state == .listening {
+            beginListening(followUp: isFollowUpWindow)
+        }
         let generation = recognitionGeneration
         let work = DispatchWorkItem { [weak self] in
             guard let self = self,

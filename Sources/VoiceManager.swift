@@ -17,6 +17,8 @@ final class VoiceManager: NSObject {
     /// 途中「碎碎念」专用播放器：独立于导航播报，不计入 isSpeaking，
     /// 所以导航转向播报永远能抢在它前面（保命优先）。
     private var chatterPlayer: AVAudioPlayer?
+    private var chatterRequestId = 0
+    private var chatterCompletion: ((Bool) -> Void)?
     private let synth = AVSpeechSynthesizer()
     private let cacheDir: URL
     /// 每次 speak 自增；回调里比对，晚到的旧请求直接丢弃（打断逻辑）。
@@ -85,6 +87,7 @@ final class VoiceManager: NSObject {
         // 打断上一句（含正在放的碎碎念——导航播报永远优先，保命）
         player?.stop()
         player = nil
+        finishChatter(success: false)
         chatterPlayer?.stop()
         chatterPlayer = nil
         synth.stopSpeaking(at: .immediate)
@@ -113,6 +116,7 @@ final class VoiceManager: NSObject {
         currentPlayId += 1
         player?.stop()
         player = nil
+        finishChatter(success: false)
         chatterPlayer?.stop()
         chatterPlayer = nil
         synth.stopSpeaking(at: .immediate)
@@ -125,36 +129,62 @@ final class VoiceManager: NSObject {
     /// 1) 正在念导航（或在合成空档）就直接放弃，绝不打断转向播报；
     /// 2) 合成失败就静默跳过，**不退系统音**（闲聊不值得让机器音蹦出来）；
     /// 3) 用独立 chatterPlayer，不计入 isSpeaking——所以任何时候导航播报都能抢在它前面。
-    func speakChatter(_ raw: String) {
+    func speakChatter(_ raw: String, completion: ((Bool) -> Void)? = nil) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        guard !isSpeaking else { return }            // 有导航播报就让路
-        if chatterPlayer?.isPlaying == true { return } // 上一句碎碎念还没完就不叠
+        guard !text.isEmpty else { completion?(false); return }
+        guard !isSpeaking else { completion?(false); return } // 有导航播报就让路
+        if chatterPlayer?.isPlaying == true { completion?(false); return }
+
+        chatterRequestId += 1
+        let requestId = chatterRequestId
+        chatterCompletion = completion
 
         if let data = cachedAudio(for: text) {
-            playChatter(data)
+            playChatter(data, requestId: requestId)
         } else {
             synthesize(text: text) { [weak self] data in
-                guard let self = self, let data = data, !data.isEmpty else { return } // 失败静默
+                guard let self = self, requestId == self.chatterRequestId else { return }
+                guard let data = data, !data.isEmpty else {
+                    self.finishChatter(success: false)
+                    return
+                }
                 self.cache(data: data, for: text)
                 DispatchQueue.main.async {
-                    guard !self.isSpeaking else { return } // 合成回来时导航已开口就放弃这句
-                    self.playChatter(data)
+                    guard requestId == self.chatterRequestId else { return }
+                    guard !self.isSpeaking else {
+                        self.finishChatter(success: false)
+                        return
+                    }
+                    self.playChatter(data, requestId: requestId)
                 }
             }
         }
     }
 
-    private func playChatter(_ data: Data) {
+    private func playChatter(_ data: Data, requestId: Int) {
+        guard requestId == chatterRequestId else { return }
         activateSession()
         do {
             chatterPlayer = try AVAudioPlayer(data: data)
             chatterPlayer?.delegate = self
-            chatterPlayer?.play()
+            guard chatterPlayer?.play() == true else {
+                chatterPlayer = nil
+                finishChatter(success: false)
+                return
+            }
             publishOutputState()
         } catch {
             // 放不了就算了——闲聊不兜底
+            finishChatter(success: false)
         }
+    }
+
+    private func finishChatter(success: Bool) {
+        chatterRequestId += 1
+        let completion = chatterCompletion
+        chatterCompletion = nil
+        guard let completion = completion else { return }
+        DispatchQueue.main.async { completion(success) }
     }
 
     /// 预合成一批高频短语进缓存（Phase 2b 导航开始前调，避免第一次现合成的空档）。
@@ -297,6 +327,7 @@ extension VoiceManager: AVAudioPlayerDelegate {
             chatterPlayer = nil
             if !isSpeaking { deactivateSession() } // 导航没在说才让出会话
             publishOutputState()
+            finishChatter(success: flag)
             return
         }
         busy = false
