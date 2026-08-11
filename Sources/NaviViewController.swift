@@ -102,10 +102,18 @@ final class NaviViewController: UIViewController {
                                          wayPoints: vias.isEmpty ? nil : vias,
                                          drivingStrategy: .motorStrategyMultipleDefault)
         } else {
-            // 起点 = 实时 GPS
-            ok = mgr.calculateDriveRoute(withEnd: [end],
-                                         wayPoints: vias.isEmpty ? nil : vias,
-                                         drivingStrategy: .motorStrategyMultipleDefault)
+            if let requestedStart = request.start {
+                let start = AMapNaviPoint.location(withLatitude: CGFloat(requestedStart.lat),
+                                                    longitude: CGFloat(requestedStart.lng))!
+                ok = mgr.calculateDriveRoute(withStart: [start], end: [end],
+                                             wayPoints: vias.isEmpty ? nil : vias,
+                                             drivingStrategy: .motorStrategyMultipleDefault)
+            } else {
+                // 旧链接没有显式起点时，保持原行为：起点 = 实时 GPS。
+                ok = mgr.calculateDriveRoute(withEnd: [end],
+                                             wayPoints: vias.isEmpty ? nil : vias,
+                                             drivingStrategy: .motorStrategyMultipleDefault)
+            }
         }
         if !ok { showFatal("路线没能开始规划") }
     }
@@ -249,11 +257,20 @@ final class NaviViewController: UIViewController {
     /// 兜底：拉起官方高德 App 导到同一目的地（我们这条路走不了时的保命出口）。
     private func openInAmap() {
         let name = (request.dest.name ?? "目的地").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "目的地"
-        let s = "iosamap://path?sourceApplication=yinnav&dlat=\(request.dest.lat)&dlon=\(request.dest.lng)&dname=\(name)&t=0"
+        var s = "iosamap://path?sourceApplication=yinnav&dlat=\(request.dest.lat)&dlon=\(request.dest.lng)&dname=\(name)&t=0"
+        if let start = request.start {
+            let startName = (start.name ?? "起点").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "起点"
+            s += "&slat=\(start.lat)&slon=\(start.lng)&sname=\(startName)"
+        }
         if let u = URL(string: s), UIApplication.shared.canOpenURL(u) {
             UIApplication.shared.open(u)
         } else {
-            let web = "https://uri.amap.com/navigation?to=\(request.dest.lng),\(request.dest.lat),\(name)&mode=car&coordinate=gaode&callnative=1"
+            var web = "https://uri.amap.com/navigation?"
+            if let start = request.start {
+                let startName = (start.name ?? "起点").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "起点"
+                web += "from=\(start.lng),\(start.lat),\(startName)&"
+            }
+            web += "to=\(request.dest.lng),\(request.dest.lat),\(name)&mode=car&coordinate=gaode&callnative=1"
             if let u = URL(string: web) { UIApplication.shared.open(u) }
         }
     }

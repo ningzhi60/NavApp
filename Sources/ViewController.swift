@@ -170,7 +170,7 @@ final class ViewController: UIViewController {
     @objc private func tapSimulate() {
         // 固定目的地（北京颐和园附近，GCJ-02），室内也能跑一整段模拟导航听因的声音
         let dest = NavPoint(lat: 39.9999, lng: 116.2755, name: "颐和园")
-        NavLauncher.start(RouteRequest(dest: dest, waypoints: []), simulate: true)
+        NavLauncher.start(RouteRequest(start: nil, dest: dest, waypoints: []), simulate: true)
     }
 
     @objc private func tapTest() {

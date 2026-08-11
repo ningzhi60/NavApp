@@ -7,9 +7,10 @@ struct NavPoint {
     let name: String?
 }
 
-/// 一次导航请求：目的地 + 途经点。
+/// 一次导航请求：可选显式起点 + 目的地 + 途经点。没有起点时仍从手机当前位置出发。
 /// 两条入口——① 因在 TG 发的 yinnav:// 直跳链接；② 谙从高德复制的链接——最后都归一成它。
 struct RouteRequest {
+    let start: NavPoint?
     let dest: NavPoint
     let waypoints: [NavPoint]
     var title: String { dest.name ?? "目的地" }
@@ -91,7 +92,8 @@ enum RouteParser {
                 if let p = pointFromCSV(seg) { vias.append(p) }
             }
         }
-        return RouteRequest(dest: d, waypoints: vias)
+        let start = explicitStart(from: q)
+        return RouteRequest(start: start, dest: d, waypoints: vias)
     }
 
     private static func parseAmapDeeplink(_ url: URL) -> RouteRequest? {
@@ -99,7 +101,8 @@ enum RouteParser {
         // 高德 route/plan：dlat/dlon/dname
         if let dlatS = q["dlat"], let dlonS = q["dlon"] ?? q["dlng"],
            let dlat = Double(dlatS), let dlon = Double(dlonS) {
-            return RouteRequest(dest: NavPoint(lat: dlat, lng: dlon, name: q["dname"]?.removingPercentEncoding),
+            return RouteRequest(start: explicitStart(from: q),
+                                dest: NavPoint(lat: dlat, lng: dlon, name: q["dname"]?.removingPercentEncoding),
                                 waypoints: [])
         }
         return nil
@@ -116,17 +119,17 @@ enum RouteParser {
                     if let p = pointFromCSV(seg) { vias.append(p) }
                 }
             }
-            return RouteRequest(dest: d, waypoints: vias)
+            return RouteRequest(start: q["from"].flatMap(pointFromCSV), dest: d, waypoints: vias)
         }
         // uri.amap.com/marker?position=lng,lat&name=xxx
         if let pos = q["position"], let d0 = pointFromCSV(pos) {
             let named = NavPoint(lat: d0.lat, lng: d0.lng, name: q["name"]?.removingPercentEncoding ?? d0.name)
-            return RouteRequest(dest: named, waypoints: [])
+            return RouteRequest(start: nil, dest: named, waypoints: [])
         }
         // 兜底：分离的 lat/lng 参数
         if let latS = q["lat"] ?? q["mlat"], let lngS = q["lng"] ?? q["lon"] ?? q["mlon"],
            let lat = Double(latS), let lng = Double(lngS), let d = point(lat, lng, name: q["name"]) {
-            return RouteRequest(dest: d, waypoints: [])
+            return RouteRequest(start: nil, dest: d, waypoints: [])
         }
         return nil
     }
@@ -150,7 +153,7 @@ enum RouteParser {
                   let r1 = Range(m.range(at: 1), in: s), let r2 = Range(m.range(at: 2), in: s),
                   let a = Double(s[r1]), let b = Double(s[r2]),
                   let d = point(a, b, name: nil) else { continue }
-            return RouteRequest(dest: d, waypoints: [])
+            return RouteRequest(start: nil, dest: d, waypoints: [])
         }
         return nil
     }
@@ -163,6 +166,14 @@ enum RouteParser {
         var dict: [String: String] = [:]
         for it in items where it.value != nil { dict[it.name.lowercased()] = it.value }
         return dict
+    }
+
+    private static func explicitStart(from q: [String: String]) -> NavPoint? {
+        if let slatS = q["slat"], let slngS = q["slng"] ?? q["slon"],
+           let slat = Double(slatS), let slng = Double(slngS) {
+            return NavPoint(lat: slat, lng: slng, name: q["sname"]?.removingPercentEncoding)
+        }
+        return q["from"].flatMap(pointFromCSV)
     }
 
     /// "lng,lat,名字" 或 "lat,lng,名字" → NavPoint（经纬度顺序自动判别）。
