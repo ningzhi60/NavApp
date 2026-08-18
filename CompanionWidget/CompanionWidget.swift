@@ -38,23 +38,26 @@ struct CompanionLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.center) {
                     Text(context.state.activity)
                         .font(.headline)
+                        .foregroundStyle(.white)
                         .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     Text(context.state.thought)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white.opacity(0.82))
                         .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } compactLeading: {
-                CompanionIcon(data: context.state.iconPNGData, size: 22)
+                CompanionCompactBadge(data: context.state.iconPNGData)
             } compactTrailing: {
                 Text(shortActivity(context.state.activity))
                     .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
                     .lineLimit(1)
             } minimal: {
-                CompanionIcon(data: context.state.iconPNGData, size: 22)
+                CompanionCompactBadge(data: context.state.iconPNGData)
             }
             .widgetURL(telegramURL)
             .keylineTint(.mint)
@@ -70,6 +73,29 @@ struct CompanionLiveActivity: Widget {
     }
 }
 
+/// 紧凑态必须始终有高对比标记。用户 PNG 透明、纯黑或无法解码时仍显示“因”。
+private struct CompanionCompactBadge: View {
+    let data: Data?
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.mint)
+            if let data, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(Circle())
+            } else {
+                Text("因")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(.black)
+            }
+        }
+        .frame(width: 22, height: 22)
+    }
+}
+
 private struct CompanionIcon: View {
     let data: Data?
     let size: CGFloat
@@ -81,11 +107,13 @@ private struct CompanionIcon: View {
                     .resizable()
                     .scaledToFit()
             } else {
-                Image(systemName: "house.fill")
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(.mint)
-                    .padding(3)
+                ZStack {
+                    RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                        .fill(Color.mint)
+                    Text("因")
+                        .font(.system(size: size * 0.42, weight: .black))
+                        .foregroundStyle(.black)
+                }
             }
         }
         .frame(width: size, height: size)
