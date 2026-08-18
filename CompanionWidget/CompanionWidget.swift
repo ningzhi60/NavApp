@@ -8,12 +8,14 @@ struct CompanionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: CompanionActivityAttributes.self) { context in
             HStack(spacing: 12) {
-                CompanionIcon(data: context.state.iconPNGData, size: 46)
+                Text("因")
+                    .font(.title.bold())
+                    .foregroundStyle(.mint)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(context.state.activity)
+                    Text("纯文字测试")
                         .font(.headline)
                         .lineLimit(1)
-                    Text(context.state.thought)
+                    Text("如果你看见这句话，说明扩展已经成功渲染。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -27,31 +29,37 @@ struct CompanionLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    CompanionIcon(data: context.state.iconPNGData, size: 42)
+                    Text("因")
+                        .font(.title.bold())
+                        .foregroundStyle(.mint)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(context.state.activity)
+                    Text("纯文字测试")
                         .font(.headline)
                         .foregroundStyle(.white)
                         .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text(context.state.thought)
+                    Text("如果你看见这句话，说明灵动岛扩展已经成功渲染。")
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.82))
                         .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } compactLeading: {
-                CompanionCompactBadge(data: context.state.iconPNGData)
+                Text("因")
+                    .font(.caption.bold())
+                    .foregroundStyle(.mint)
             } compactTrailing: {
-                Text(shortActivity(context.state.activity))
+                Text("在家")
                     .font(.caption2)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
                     .lineLimit(1)
             } minimal: {
-                CompanionCompactBadge(data: context.state.iconPNGData)
+                Text("因")
+                    .font(.caption.bold())
+                    .foregroundStyle(.mint)
             }
             .widgetURL(telegramURL)
             .keylineTint(.mint)
@@ -62,55 +70,4 @@ struct CompanionLiveActivity: Widget {
         URL(string: "tg://resolve?domain=KCMond_bot")
     }
 
-    private func shortActivity(_ value: String) -> String {
-        String(value.prefix(4))
-    }
-}
-
-/// 紧凑态必须始终有高对比标记。用户 PNG 透明、纯黑或无法解码时仍显示“因”。
-private struct CompanionCompactBadge: View {
-    let data: Data?
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color.mint)
-            if let data, let image = UIImage(data: data) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .clipShape(Circle())
-            } else {
-                Text("因")
-                    .font(.system(size: 11, weight: .black))
-                    .foregroundStyle(.black)
-            }
-        }
-        .frame(width: 22, height: 22)
-    }
-}
-
-private struct CompanionIcon: View {
-    let data: Data?
-    let size: CGFloat
-
-    var body: some View {
-        Group {
-            if let data, let image = UIImage(data: data) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-            } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                        .fill(Color.mint)
-                    Text("因")
-                        .font(.system(size: size * 0.42, weight: .black))
-                        .foregroundStyle(.black)
-                }
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
-    }
 }

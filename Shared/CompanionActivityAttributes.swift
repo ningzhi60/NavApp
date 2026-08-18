@@ -5,8 +5,6 @@ import Foundation
 @available(iOS 16.1, *)
 struct CompanionActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
-        /// 缩小后的 PNG。连同其余状态必须低于 ActivityKit 的 4KB 上限。
-        var iconPNGData: Data?
         var activity: String
         var thought: String
         var updatedAt: Date
