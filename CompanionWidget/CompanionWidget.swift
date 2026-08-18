@@ -4,6 +4,78 @@ import UIKit
 import WidgetKit
 
 @main
+struct CompanionWidgetBundle: WidgetBundle {
+    var body: some Widget {
+        CompanionRegistrationWidget()
+        CompanionLiveActivity()
+    }
+}
+
+/// 注册诊断用普通主屏小组件：用于确认 iOS 是否真正加载了 CompanionWidget.appex。
+struct CompanionRegistrationWidget: Widget {
+    private let kind = "CompanionRegistrationWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: CompanionTimelineProvider()) { entry in
+            CompanionRegistrationView(entry: entry)
+        }
+        .configurationDisplayName("因的小屋测试")
+        .description("用于确认灵动岛扩展是否已被系统正确注册。")
+        .supportedFamilies([.systemSmall])
+    }
+}
+
+struct CompanionTimelineEntry: TimelineEntry {
+    let date: Date
+}
+
+struct CompanionTimelineProvider: TimelineProvider {
+    func placeholder(in context: Context) -> CompanionTimelineEntry {
+        CompanionTimelineEntry(date: Date())
+    }
+
+    func getSnapshot(in context: Context, completion: @escaping (CompanionTimelineEntry) -> Void) {
+        completion(CompanionTimelineEntry(date: Date()))
+    }
+
+    func getTimeline(in context: Context, completion: @escaping (Timeline<CompanionTimelineEntry>) -> Void) {
+        completion(Timeline(entries: [CompanionTimelineEntry(date: Date())], policy: .never))
+    }
+}
+
+struct CompanionRegistrationView: View {
+    let entry: CompanionTimelineEntry
+
+    var body: some View {
+        ZStack {
+            Color.black
+            VStack(spacing: 8) {
+                Text("因")
+                    .font(.system(size: 42, weight: .black))
+                    .foregroundStyle(.mint)
+                Text("扩展已注册")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text("Static Widget")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+        }
+        .widgetBackgroundCompat()
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func widgetBackgroundCompat() -> some View {
+        if #available(iOS 17.0, *) {
+            containerBackground(.black, for: .widget)
+        } else {
+            background(Color.black)
+        }
+    }
+}
+
 struct CompanionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: CompanionActivityAttributes.self) { context in
