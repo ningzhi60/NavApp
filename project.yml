@@ -26,7 +26,7 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: 因导航
+        CFBundleDisplayName: YinNav
         CFBundleShortVersionString: "0.1"
         NSSupportsLiveActivities: true
         UILaunchScreen: {}
@@ -67,7 +67,7 @@ targets:
     info:
       path: CompanionWidget/Info.plist
       properties:
-        CFBundleDisplayName: 因的小屋
+        CFBundleDisplayName: YinHome
         CFBundleShortVersionString: "0.1"
         NSSupportsLiveActivities: true
         NSExtension:

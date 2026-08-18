@@ -5,13 +5,6 @@ import UniformTypeIdentifiers
 final class CompanionHomeViewController: UIViewController {
     private let statusLabel = UILabel()
     private let preview = UIImageView()
-    private var previewIndex = 0
-
-    private let previewStates: [(String, String)] = [
-        ("在小屋里待着", "刚搬进灵动岛，先悄悄看你一眼。"),
-        ("戴着耳机晃悠", "这首歌好像很适合今天。"),
-        ("趴在窗边发呆", "你忙你的，我也有自己的小世界。"),
-    ]
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -39,7 +32,7 @@ final class CompanionHomeViewController: UIViewController {
             preview,
             statusLabel,
             makeButton("🏠 开启 / 更新灵动岛", #selector(startOrUpdate)),
-            makeButton("✨ 换一条预览状态", #selector(nextPreview)),
+            makeButton("✨ 让因换一个状态", #selector(nextPreview)),
             makeButton("🖼 添加或删除 PNG", #selector(manageImages)),
             makeButton("⏹ 关闭灵动岛", #selector(endActivity), color: .systemRed),
         ])
@@ -79,19 +72,36 @@ final class CompanionHomeViewController: UIViewController {
     }
 
     @objc private func startOrUpdate() {
-        let text = previewStates[previewIndex % previewStates.count]
-        let state = CompanionPublicState(
-            activity: text.0,
-            thought: text.1,
-            image: CompanionImageStore.shared.selectedImage)
-        CompanionActivityManager.shared.publish(state) { [weak self] error in
-            self?.refresh(message: error.map { "开启失败：\($0)" } ?? "已送到灵动岛 ✅")
-        }
+        requestState(force: false)
     }
 
     @objc private func nextPreview() {
-        previewIndex = (previewIndex + 1) % previewStates.count
-        startOrUpdate()
+        requestState(force: true)
+    }
+
+    private func requestState(force: Bool) {
+        refresh(message: "因正在想此刻想公开的状态…")
+        CompanionStateService.shared.fetch(force: force) { [weak self] result in
+            switch result {
+            case .failure(let error):
+                self?.refresh(message: "更新失败：\(error.localizedDescription)\n已有的灵动岛内容不变。")
+            case .success(let generated):
+                let state = CompanionPublicState(
+                    activity: generated.activity,
+                    thought: generated.thought,
+                    image: CompanionImageStore.shared.selectedImage)
+                CompanionActivityManager.shared.publish(state) { [weak self] error in
+                    if let error = error {
+                        self?.refresh(message: "开启失败：\(error)")
+                        return
+                    }
+                    let effort = generated.effort.isEmpty ? "" : " · \(generated.effort)"
+                    let source = generated.cached ? "复用近期状态" : "新生成"
+                    self?.refresh(message:
+                        "\(generated.activity)\n\(generated.thought)\n\(generated.backend) · \(generated.model)\(effort) · \(source) ✅")
+                }
+            }
+        }
     }
 
     @objc private func manageImages() {

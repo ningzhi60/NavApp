@@ -27,6 +27,7 @@ final class CompanionActivityManager {
             return
         }
         let content = CompanionActivityAttributes.ContentState(
+            iconPNGData: CompanionImageStore.shared.activityIconData(for: state.image),
             activity: String(state.activity.prefix(18)),
             thought: String(state.thought.prefix(80)),
             updatedAt: Date())

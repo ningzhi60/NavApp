@@ -6,73 +6,7 @@ import WidgetKit
 @main
 struct CompanionWidgetBundle: WidgetBundle {
     var body: some Widget {
-        CompanionRegistrationWidget()
         CompanionLiveActivity()
-    }
-}
-
-/// 注册诊断用普通主屏小组件：用于确认 iOS 是否真正加载了 CompanionWidget.appex。
-struct CompanionRegistrationWidget: Widget {
-    private let kind = "CompanionRegistrationWidget"
-
-    var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: CompanionTimelineProvider()) { entry in
-            CompanionRegistrationView(entry: entry)
-        }
-        .configurationDisplayName("因的小屋测试")
-        .description("用于确认灵动岛扩展是否已被系统正确注册。")
-        .supportedFamilies([.systemSmall])
-    }
-}
-
-struct CompanionTimelineEntry: TimelineEntry {
-    let date: Date
-}
-
-struct CompanionTimelineProvider: TimelineProvider {
-    func placeholder(in context: Context) -> CompanionTimelineEntry {
-        CompanionTimelineEntry(date: Date())
-    }
-
-    func getSnapshot(in context: Context, completion: @escaping (CompanionTimelineEntry) -> Void) {
-        completion(CompanionTimelineEntry(date: Date()))
-    }
-
-    func getTimeline(in context: Context, completion: @escaping (Timeline<CompanionTimelineEntry>) -> Void) {
-        completion(Timeline(entries: [CompanionTimelineEntry(date: Date())], policy: .never))
-    }
-}
-
-struct CompanionRegistrationView: View {
-    let entry: CompanionTimelineEntry
-
-    var body: some View {
-        ZStack {
-            Color.black
-            VStack(spacing: 8) {
-                Text("因")
-                    .font(.system(size: 42, weight: .black))
-                    .foregroundStyle(.mint)
-                Text("扩展已注册")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                Text("Static Widget")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-        }
-        .widgetBackgroundCompat()
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func widgetBackgroundCompat() -> some View {
-        if #available(iOS 17.0, *) {
-            containerBackground(.black, for: .widget)
-        } else {
-            background(Color.black)
-        }
     }
 }
 
@@ -80,14 +14,12 @@ struct CompanionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: CompanionActivityAttributes.self) { context in
             HStack(spacing: 12) {
-                Text("因")
-                    .font(.title.bold())
-                    .foregroundStyle(.mint)
+                CompanionIcon(data: context.state.iconPNGData, size: 46)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("纯文字测试")
+                    Text(context.state.activity)
                         .font(.headline)
                         .lineLimit(1)
-                    Text("如果你看见这句话，说明扩展已经成功渲染。")
+                    Text(context.state.thought)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -101,37 +33,31 @@ struct CompanionLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Text("因")
-                        .font(.title.bold())
-                        .foregroundStyle(.mint)
+                    CompanionIcon(data: context.state.iconPNGData, size: 42)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text("纯文字测试")
+                    Text(context.state.activity)
                         .font(.headline)
                         .foregroundStyle(.white)
                         .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text("如果你看见这句话，说明灵动岛扩展已经成功渲染。")
+                    Text(context.state.thought)
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.82))
                         .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } compactLeading: {
-                Text("因")
-                    .font(.caption.bold())
-                    .foregroundStyle(.mint)
+                CompanionCompactBadge(data: context.state.iconPNGData)
             } compactTrailing: {
-                Text("在家")
+                Text(String(context.state.activity.prefix(5)))
                     .font(.caption2)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
                     .lineLimit(1)
             } minimal: {
-                Text("因")
-                    .font(.caption.bold())
-                    .foregroundStyle(.mint)
+                CompanionCompactBadge(data: context.state.iconPNGData)
             }
             .widgetURL(telegramURL)
             .keylineTint(.mint)
@@ -142,4 +68,51 @@ struct CompanionLiveActivity: Widget {
         URL(string: "tg://resolve?domain=KCMond_bot")
     }
 
+}
+
+/// 用户 PNG 过透明或无法解码时，紧凑态仍会显示高对比的“因”。
+private struct CompanionCompactBadge: View {
+    let data: Data?
+
+    var body: some View {
+        ZStack {
+            Circle().fill(Color.mint)
+            if let data, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(Circle())
+            } else {
+                Text("因")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(.black)
+            }
+        }
+        .frame(width: 22, height: 22)
+    }
+}
+
+private struct CompanionIcon: View {
+    let data: Data?
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let data, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                        .fill(Color.mint)
+                    Text("因")
+                        .font(.system(size: size * 0.42, weight: .black))
+                        .foregroundStyle(.black)
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+    }
 }
