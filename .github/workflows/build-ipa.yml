@@ -9,14 +9,14 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15          # 默认 Xcode 16，能打开 XcodeGen/CocoaPods 生成的新工程格式(format 77)
+    runs-on: macos-26          # iOS 26 的 WidgetKit/ActivityKit 必须用同代 SDK 验证运行时扩展发现
     steps:
       - uses: actions/checkout@v4
 
-      # ⓪ 选最新的 Xcode 16，避免默认落到旧版本打不开新工程格式
-      - name: Select latest Xcode
+      # ⓪ 选最新稳定 Xcode 26；旧流程强制 Xcode 16 会用 iOS 18 SDK 构建灵动岛扩展。
+      - name: Select latest Xcode 26
         run: |
-          latest=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          latest=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
           if [ -z "$latest" ]; then latest=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1); fi
           echo "Using $latest"
           sudo xcode-select -s "$latest/Contents/Developer"
