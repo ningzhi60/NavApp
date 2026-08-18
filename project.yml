@@ -9,6 +9,10 @@ targets:
     platform: iOS
     sources:
       - Sources
+      - Shared
+    dependencies:
+      - target: CompanionWidget
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.an.yinnav
@@ -24,6 +28,7 @@ targets:
       properties:
         CFBundleDisplayName: 因导航
         CFBundleShortVersionString: "0.1"
+        NSSupportsLiveActivities: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -43,6 +48,29 @@ targets:
           - CFBundleURLName: com.an.yinnav
             CFBundleURLSchemes:
               - yinnav
+  CompanionWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.1"
+    sources:
+      - CompanionWidget
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.an.yinnav.CompanionWidget
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+    info:
+      path: CompanionWidget/Info.plist
+      properties:
+        CFBundleDisplayName: 因的小屋
+        CFBundleShortVersionString: "0.1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
 schemes:
   NavApp:
     build:

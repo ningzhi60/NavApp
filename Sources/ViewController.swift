@@ -73,6 +73,7 @@ final class ViewController: UIViewController {
             makeButton("🧭 模拟导航（测因的声音）", #selector(tapSimulate)),
             makeButton("📋 用剪贴板里的高德链接开导", #selector(tapClipboard)),
             makeButton("🔊 试听：前方路口，请右转", #selector(tapTest)),
+            makeButton("🏠 因的灵动岛小屋", #selector(openCompanionHome)),
         ])
         stack.axis = .vertical
         stack.spacing = 12
@@ -198,5 +199,12 @@ final class ViewController: UIViewController {
 
     @objc private func tapTest() {
         VoiceManager.shared.speak("前方路口，请右转")
+    }
+
+    @objc private func openCompanionHome() {
+        let controller = CompanionHomeViewController()
+        let navigation = UINavigationController(rootViewController: controller)
+        navigation.modalPresentationStyle = .pageSheet
+        present(navigation, animated: true)
     }
 }
