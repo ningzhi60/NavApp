@@ -67,7 +67,9 @@ final class CompanionImageStore {
     /// Dynamic Island 状态总计只有 4KB。保留原 PNG，同时为岛生成尽量大的轻量透明缩略图。
     func activityIconData(for image: UIImage?) -> Data? {
         guard let image else { return nil }
-        for pixels in [72, 60, 52, 44, 36, 28, 22, 18] {
+        // ActivityKit 按 UIImage 的 point size 检查素材；Data 解码后的 scale 为 1。
+        // minimal presentation 官方上限约 45x36.67pt，因此最长边固定不超过 32pt。
+        for pixels in [32, 28, 24, 20, 18, 16] {
             if let resized = image.normalized(maxPixel: CGFloat(pixels)),
                let data = resized.pngData(), data.count <= 2_200 {
                 return data

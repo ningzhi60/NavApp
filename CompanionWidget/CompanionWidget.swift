@@ -4,12 +4,6 @@ import UIKit
 import WidgetKit
 
 @main
-struct CompanionWidgetBundle: WidgetBundle {
-    var body: some Widget {
-        CompanionLiveActivity()
-    }
-}
-
 struct CompanionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: CompanionActivityAttributes.self) { context in
