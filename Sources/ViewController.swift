@@ -17,11 +17,20 @@ final class ViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
 
+        // 首页内容会随功能增加而变长。使用滚动容器，避免小屏手机把末尾入口裁掉。
+        let scrollView = UIScrollView()
+        let contentView = UIView()
+        scrollView.alwaysBounceVertical = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scrollView)
+        scrollView.addSubview(contentView)
+
         label.numberOfLines = 0
         label.textAlignment = .center
         label.font = .systemFont(ofSize: 17, weight: .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(label)
+        contentView.addSubview(label)
 
         // 引用高德导航类，强制链接；能拿到单例即说明 SDK 链接成功。
         _ = AMapNaviDriveManager.sharedInstance()
@@ -70,25 +79,35 @@ final class ViewController: UIViewController {
             voiceTranscriptLabel,
             voiceConversationRow,
             voiceSelfCheckButton,
+            makeButton("🏠 因的灵动岛小屋", #selector(openCompanionHome)),
             makeButton("🧭 模拟导航（测因的声音）", #selector(tapSimulate)),
             makeButton("📋 用剪贴板里的高德链接开导", #selector(tapClipboard)),
             makeButton("🔊 试听：前方路口，请右转", #selector(tapTest)),
-            makeButton("🏠 因的灵动岛小屋", #selector(openCompanionHome)),
         ])
         stack.axis = .vertical
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        contentView.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
-            label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            label.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            label.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
+            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
             stack.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 24),
-            stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            stack.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+            stack.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -28),
         ])
 
         // 进前台时检查剪贴板（高德复制→切回来的主路径）
