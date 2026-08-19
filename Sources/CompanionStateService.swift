@@ -1,9 +1,11 @@
 import CryptoKit
 import Foundation
+import UIKit
 
 struct CompanionGeneratedState {
+    let mood: String
     let activity: String
-    let thought: String
+    let innerThought: String
     let backend: String
     let model: String
     let effort: String
@@ -17,13 +19,31 @@ final class CompanionStateService {
     private let endpoint = "https://calendar.45.32.43.224.sslip.io/nav/api/companion-state"
 
     func fetch(force: Bool, completion: @escaping (Result<CompanionGeneratedState, Error>) -> Void) {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let batteryLevel = UIDevice.current.batteryLevel
+        let batteryState: String
+        switch UIDevice.current.batteryState {
+        case .charging: batteryState = "charging"
+        case .full: batteryState = "full"
+        case .unplugged: batteryState = "unplugged"
+        default: batteryState = "unknown"
+        }
+        let context: [String: Any] = [
+            "event": "companion_app_foreground",
+            "batteryPercent": batteryLevel >= 0 ? Int(batteryLevel * 100) : -1,
+            "batteryState": batteryState,
+            "lowPowerMode": ProcessInfo.processInfo.isLowPowerModeEnabled,
+            "thermalState": ProcessInfo.processInfo.thermalState.rawValue,
+            "locale": Locale.current.identifier,
+            "timeZone": TimeZone.current.identifier,
+        ]
         let ts = String(Int(Date().timeIntervalSince1970))
         let key = SymmetricKey(data: Data(Secrets.minimaxApiKey.utf8))
         let mac = HMAC<SHA256>.authenticationCode(for: Data(ts.utf8), using: key)
         let sig = mac.map { String(format: "%02x", $0) }.joined()
         guard let url = URL(string: endpoint),
               let body = try? JSONSerialization.data(withJSONObject: [
-                "ts": ts, "sig": sig, "force": force,
+                "ts": ts, "sig": sig, "force": force, "context": context,
               ]) else {
             completion(.failure(ServiceError.invalidRequest))
             return
@@ -42,13 +62,14 @@ final class CompanionStateService {
                   let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let activity = json["activity"] as? String,
-                  let thought = json["thought"] as? String else {
+                  let innerThought = (json["innerThought"] ?? json["thought"]) as? String else {
                 DispatchQueue.main.async { completion(.failure(ServiceError.badResponse)) }
                 return
             }
             let state = CompanionGeneratedState(
+                mood: json["mood"] as? String ?? "安静",
                 activity: activity,
-                thought: thought,
+                innerThought: innerThought,
                 backend: json["backend"] as? String ?? "?",
                 model: json["model"] as? String ?? "?",
                 effort: json["effort"] as? String ?? "",

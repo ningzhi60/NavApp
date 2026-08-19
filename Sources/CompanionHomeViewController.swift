@@ -52,6 +52,9 @@ final class CompanionHomeViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         refresh()
+        if CompanionActivityManager.shared.isRunning {
+            requestState(force: false)
+        }
     }
 
     private func makeButton(_ title: String, _ action: Selector, color: UIColor = .systemBlue) -> UIButton {
@@ -87,8 +90,9 @@ final class CompanionHomeViewController: UIViewController {
                 self?.refresh(message: "更新失败：\(error.localizedDescription)\n已有的灵动岛内容不变。")
             case .success(let generated):
                 let state = CompanionPublicState(
+                    mood: generated.mood,
                     activity: generated.activity,
-                    thought: generated.thought,
+                    innerThought: generated.innerThought,
                     image: CompanionImageStore.shared.selectedImage)
                 CompanionActivityManager.shared.publish(state) { [weak self] error in
                     if let error = error {
@@ -98,7 +102,7 @@ final class CompanionHomeViewController: UIViewController {
                     let effort = generated.effort.isEmpty ? "" : " · \(generated.effort)"
                     let source = generated.cached ? "复用近期状态" : "新生成"
                     self?.refresh(message:
-                        "\(generated.activity)\n\(generated.thought)\n\(generated.backend) · \(generated.model)\(effort) · \(source) ✅")
+                        "状态：\(generated.mood)\n正在做：\(generated.activity)\n心里话：\(generated.innerThought)\n\(generated.backend) · \(generated.model)\(effort) · \(source) ✅")
                 }
             }
         }

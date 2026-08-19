@@ -16,10 +16,13 @@ struct CompanionLiveActivity: Widget {
             HStack(spacing: 12) {
                 CompanionIcon(data: context.state.iconPNGData, size: 46)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(context.state.activity)
+                    Text(context.state.mood)
                         .font(.headline)
                         .lineLimit(1)
-                    Text(context.state.thought)
+                    Text(context.state.activity)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                    Text(context.state.innerThought)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -36,17 +39,21 @@ struct CompanionLiveActivity: Widget {
                     CompanionIcon(data: context.state.iconPNGData, size: 42)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(context.state.activity)
+                    Text(context.state.mood)
                         .font(.headline)
                         .foregroundStyle(.white)
                         .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text(context.state.thought)
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.82))
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(context.state.activity)
+                            .font(.subheadline.weight(.semibold))
+                        Text(context.state.innerThought)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.82))
+                            .lineLimit(2)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } compactLeading: {
                 CompanionCompactBadge(data: context.state.iconPNGData)

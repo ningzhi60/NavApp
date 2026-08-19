@@ -7,8 +7,9 @@ struct CompanionActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         /// 压缩后的单张 PNG；与文字合计保持在 ActivityKit 4KB 上限内。
         var iconPNGData: Data?
+        var mood: String
         var activity: String
-        var thought: String
+        var innerThought: String
         var updatedAt: Date
     }
 

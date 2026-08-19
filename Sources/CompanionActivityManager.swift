@@ -2,8 +2,9 @@ import ActivityKit
 import UIKit
 
 struct CompanionPublicState {
+    let mood: String
     let activity: String
-    let thought: String
+    let innerThought: String
     let image: UIImage?
 }
 
@@ -28,8 +29,9 @@ final class CompanionActivityManager {
         }
         let content = CompanionActivityAttributes.ContentState(
             iconPNGData: CompanionImageStore.shared.activityIconData(for: state.image),
+            mood: String(state.mood.prefix(18)),
             activity: String(state.activity.prefix(18)),
-            thought: String(state.thought.prefix(80)),
+            innerThought: String(state.innerThought.prefix(100)),
             updatedAt: Date())
 
         if let activity = Activity<CompanionActivityAttributes>.activities.first {
