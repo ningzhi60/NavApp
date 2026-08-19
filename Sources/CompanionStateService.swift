@@ -28,7 +28,7 @@ final class CompanionStateService {
         case .unplugged: batteryState = "unplugged"
         default: batteryState = "unknown"
         }
-        let context: [String: Any] = [
+        var context: [String: Any] = [
             "event": "companion_app_foreground",
             "batteryPercent": batteryLevel >= 0 ? Int(batteryLevel * 100) : -1,
             "batteryState": batteryState,
@@ -37,6 +37,15 @@ final class CompanionStateService {
             "locale": Locale.current.identifier,
             "timeZone": TimeZone.current.identifier,
         ]
+        LifeSignalCollector.shared.collect { [weak self] lifeSignals in
+            guard let self else { return }
+            context.merge(lifeSignals) { _, new in new }
+            self.send(context: context, force: force, completion: completion)
+        }
+    }
+
+    private func send(context: [String: Any], force: Bool,
+                      completion: @escaping (Result<CompanionGeneratedState, Error>) -> Void) {
         let ts = String(Int(Date().timeIntervalSince1970))
         let key = SymmetricKey(data: Data(Secrets.minimaxApiKey.utf8))
         let mac = HMAC<SHA256>.authenticationCode(for: Data(ts.utf8), using: key)

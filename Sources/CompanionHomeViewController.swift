@@ -1,4 +1,5 @@
 import PhotosUI
+import ReplayKit
 import UIKit
 import UniformTypeIdentifiers
 
@@ -27,6 +28,17 @@ final class CompanionHomeViewController: UIViewController {
         statusLabel.textAlignment = .center
         statusLabel.font = .systemFont(ofSize: 14, weight: .medium)
 
+        let broadcastPicker = RPSystemBroadcastPickerView()
+        broadcastPicker.preferredExtension = "com.an.yinnav.ScreenBroadcast"
+        broadcastPicker.showsMicrophoneButton = false
+        broadcastPicker.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        let broadcastHint = UILabel()
+        broadcastHint.text = "共享屏幕给灵动岛（点下方广播按钮；系统停止后不会自动重连）"
+        broadcastHint.numberOfLines = 0
+        broadcastHint.textAlignment = .center
+        broadcastHint.textColor = .secondaryLabel
+        broadcastHint.font = .systemFont(ofSize: 13)
+
         let stack = UIStackView(arrangedSubviews: [
             explanation,
             preview,
@@ -34,6 +46,8 @@ final class CompanionHomeViewController: UIViewController {
             makeButton("🏠 开启 / 更新灵动岛", #selector(startOrUpdate)),
             makeButton("✨ 让因换一个状态", #selector(nextPreview)),
             makeButton("🖼 添加或删除 PNG", #selector(manageImages)),
+            broadcastHint,
+            broadcastPicker,
             makeButton("⏹ 关闭灵动岛", #selector(endActivity), color: .systemRed),
         ])
         stack.axis = .vertical
