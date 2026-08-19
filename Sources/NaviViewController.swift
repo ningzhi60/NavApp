@@ -12,12 +12,22 @@ final class NaviViewController: UIViewController {
     private let simulate: Bool
 
     private var driveView: AMapNaviDriveView!
+    private let voiceStatusPill = UIView()
+    private let voiceStatusDot = UIView()
+    private let voiceStatusLabel = UILabel()
     private let locMgr = CLLocationManager()
+    /// Real-device GPS can still be cold when route calculation finishes.
+    private var gpsStartRetryWork: DispatchWorkItem?
+    private var gpsStartAttempts = 0
+    private var navigationStarted = false
+    private let gpsStartMaxAttempts = 9
     /// 高频短语——导航前预合成进缓存，第一句就秒开、不卡网络空档。
     private let warmupPhrases = [
         "前方路口请左转", "前方路口请右转", "请直行", "请掉头",
         "前方进入主路", "前方驶出主路", "请靠左行驶", "请靠右行驶",
         "前方有测速摄像头", "已到达目的地附近，导航结束",
+        // Phase D：唤醒应答与限流兜底都提前缓存，触发时不再临时等待合成。
+        "嗯？", "让我歇会儿",
     ]
 
     // MARK: - 途中因的碎碎念（实时·因自己现写的话）
@@ -60,10 +70,22 @@ final class NaviViewController: UIViewController {
         driveView.delegate = self
         view.addSubview(driveView)
         addExitButton()
+        addVoiceStatusIndicator()
 
         // 真 GPS 导航需要定位权限；模拟导航不需要
         if !simulate {
+            locMgr.delegate = self
+            locMgr.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+            locMgr.distanceFilter = kCLDistanceFilterNone
             locMgr.requestWhenInUseAuthorization()
+            locMgr.startUpdatingLocation()
+        }
+
+        // Phase B：进入导航只设置一次 playAndRecord，全程不在播放/收音之间切 category。
+        // 配置失败或权限拒绝只关闭唤醒监听，现有导航与播放仍可继续。
+        if VoiceManager.shared.beginNavigationAudioSession(),
+           VoiceWakeManager.shared.isVoiceConversationEnabled {
+            VoiceWakeManager.shared.startNavigationListening()
         }
 
         // 先把高频播报灌进缓存，再算路
@@ -96,10 +118,18 @@ final class NaviViewController: UIViewController {
                                          wayPoints: vias.isEmpty ? nil : vias,
                                          drivingStrategy: .motorStrategyMultipleDefault)
         } else {
-            // 起点 = 实时 GPS
-            ok = mgr.calculateDriveRoute(withEnd: [end],
-                                         wayPoints: vias.isEmpty ? nil : vias,
-                                         drivingStrategy: .motorStrategyMultipleDefault)
+            if let requestedStart = request.start {
+                let start = AMapNaviPoint.location(withLatitude: CGFloat(requestedStart.lat),
+                                                    longitude: CGFloat(requestedStart.lng))!
+                ok = mgr.calculateDriveRoute(withStart: [start], end: [end],
+                                             wayPoints: vias.isEmpty ? nil : vias,
+                                             drivingStrategy: .motorStrategyMultipleDefault)
+            } else {
+                // 旧链接没有显式起点时，保持原行为：起点 = 实时 GPS。
+                ok = mgr.calculateDriveRoute(withEnd: [end],
+                                             wayPoints: vias.isEmpty ? nil : vias,
+                                             drivingStrategy: .motorStrategyMultipleDefault)
+            }
         }
         if !ok { showFatal("路线没能开始规划") }
     }
@@ -123,11 +153,93 @@ final class NaviViewController: UIViewController {
         ])
     }
 
+    private func addVoiceStatusIndicator() {
+        voiceStatusPill.backgroundColor = UIColor.black.withAlphaComponent(0.58)
+        voiceStatusPill.layer.cornerRadius = 14
+        voiceStatusPill.isUserInteractionEnabled = false
+        voiceStatusPill.translatesAutoresizingMaskIntoConstraints = false
+
+        voiceStatusDot.layer.cornerRadius = 5
+        voiceStatusDot.translatesAutoresizingMaskIntoConstraints = false
+
+        voiceStatusLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        voiceStatusLabel.textColor = .white
+        voiceStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        voiceStatusPill.addSubview(voiceStatusDot)
+        voiceStatusPill.addSubview(voiceStatusLabel)
+        view.addSubview(voiceStatusPill)
+        NSLayoutConstraint.activate([
+            voiceStatusPill.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 58),
+            voiceStatusPill.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            voiceStatusPill.heightAnchor.constraint(equalToConstant: 28),
+            voiceStatusDot.leadingAnchor.constraint(equalTo: voiceStatusPill.leadingAnchor, constant: 10),
+            voiceStatusDot.centerYAnchor.constraint(equalTo: voiceStatusPill.centerYAnchor),
+            voiceStatusDot.widthAnchor.constraint(equalToConstant: 10),
+            voiceStatusDot.heightAnchor.constraint(equalToConstant: 10),
+            voiceStatusLabel.leadingAnchor.constraint(equalTo: voiceStatusDot.trailingAnchor, constant: 7),
+            voiceStatusLabel.trailingAnchor.constraint(equalTo: voiceStatusPill.trailingAnchor, constant: -10),
+            voiceStatusLabel.centerYAnchor.constraint(equalTo: voiceStatusPill.centerYAnchor),
+        ])
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(voiceWakeDidUpdate),
+            name: .voiceWakeManagerDidUpdate, object: VoiceWakeManager.shared)
+        refreshVoiceStatusIndicator()
+    }
+
+    @objc private func voiceWakeDidUpdate() {
+        refreshVoiceStatusIndicator()
+    }
+
+    private func refreshVoiceStatusIndicator() {
+        let manager = VoiceWakeManager.shared
+        voiceStatusDot.layer.removeAllAnimations()
+        voiceStatusPill.layer.removeAllAnimations()
+        voiceStatusDot.transform = .identity
+        voiceStatusPill.transform = .identity
+        voiceStatusDot.alpha = 1
+
+        guard manager.isVoiceConversationEnabled else {
+            voiceStatusDot.backgroundColor = .systemGray
+            voiceStatusLabel.text = "语音已关"
+            return
+        }
+
+        switch manager.state {
+        case .stopped:
+            voiceStatusDot.backgroundColor = .systemOrange
+            voiceStatusLabel.text = "语音未就绪"
+        case .idle:
+            voiceStatusDot.backgroundColor = .systemGreen
+            voiceStatusLabel.text = "等待唤醒"
+        case .listening:
+            voiceStatusDot.backgroundColor = .systemCyan
+            voiceStatusLabel.text = "正在听你说"
+            UIView.animate(withDuration: 0.75, delay: 0,
+                           options: [.autoreverse, .repeat, .allowUserInteraction]) {
+                self.voiceStatusDot.alpha = 0.3
+                self.voiceStatusDot.transform = CGAffineTransform(scaleX: 1.45, y: 1.45)
+            }
+        case .replying:
+            voiceStatusDot.backgroundColor = .systemPink
+            voiceStatusLabel.text = "因在回答"
+            UIView.animate(withDuration: 0.48, delay: 0,
+                           options: [.autoreverse, .repeat, .allowUserInteraction]) {
+                self.voiceStatusPill.transform = CGAffineTransform(scaleX: 1.04, y: 1.04)
+            }
+        }
+    }
+
     @objc private func exitTapped() {
         dismiss(animated: true)
     }
 
     private func teardown() {
+        VoiceWakeManager.shared.stop()
+        gpsStartRetryWork?.cancel()
+        gpsStartRetryWork = nil
+        navigationStarted = false
         sayWork?.cancel()
         sayWork = nil
         geocoder.cancelGeocode()
@@ -137,6 +249,7 @@ final class NaviViewController: UIViewController {
         mgr.removeDataRepresentative(driveView)
         mgr.delegate = nil
         VoiceManager.shared.stop()   // 内部也会掐掉碎碎念
+        VoiceManager.shared.endNavigationAudioSession()
     }
 
     // MARK: - 因的实时碎碎念（泊松调度 + 到点现取一句）
@@ -172,6 +285,8 @@ final class NaviViewController: UIViewController {
     /// 到点了：导航没在播报就现取一句因的话来说；不管成不成，都排下一次。
     private func fireSay() {
         defer { scheduleNextSay(first: false) }
+        // 主动语音对话期间暂停碎碎念；本次直接挪到下一次随机时刻。
+        guard VoiceWakeManager.shared.state == .idle else { return }
         guard !saying, !VoiceManager.shared.isSpeaking else { return }  // 让路给转向播报
         saying = true
         let dest = request.dest.name ?? "目的地"
@@ -238,14 +353,66 @@ final class NaviViewController: UIViewController {
         present(a, animated: true)
     }
 
+    /// Retry a real GPS navigation start while Core Location obtains its first fix.
+    /// Never falls back to emulator navigation on a real trip.
+    private func attemptStartGPSNavigation(_ driveManager: AMapNaviDriveManager) {
+        guard !simulate, !navigationStarted else { return }
+        gpsStartRetryWork?.cancel()
+        gpsStartRetryWork = nil
+        gpsStartAttempts += 1
+
+        if driveManager.startGPSNavi() {
+            navigationStarted = true
+            startYinSay()
+            return
+        }
+
+        guard gpsStartAttempts < gpsStartMaxAttempts else {
+            let message: String
+            if let location = lastLocation {
+                if let requestedStart = request.start {
+                    let start = CLLocation(latitude: requestedStart.lat, longitude: requestedStart.lng)
+                    let distance = location.distance(from: start)
+                    if distance > 500 {
+                        message = String(format: "当前位置距离所选起点约 %.1f 公里，请到起点附近后重试", distance / 1000)
+                    } else {
+                        message = "卫星信号仍未就绪，请到开阔处稍等后重试"
+                    }
+                } else {
+                    message = "卫星信号仍未就绪，请到开阔处稍等后重试"
+                }
+            } else {
+                message = "暂时没有取得 GPS 定位，请到开阔处稍等后重试"
+            }
+            showFatal(message)
+            return
+        }
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, !self.navigationStarted else { return }
+            self.attemptStartGPSNavigation(driveManager)
+        }
+        gpsStartRetryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+    }
+
     /// 兜底：拉起官方高德 App 导到同一目的地（我们这条路走不了时的保命出口）。
     private func openInAmap() {
         let name = (request.dest.name ?? "目的地").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "目的地"
-        let s = "iosamap://path?sourceApplication=yinnav&dlat=\(request.dest.lat)&dlon=\(request.dest.lng)&dname=\(name)&t=0"
+        var s = "iosamap://path?sourceApplication=yinnav&dlat=\(request.dest.lat)&dlon=\(request.dest.lng)&dname=\(name)&t=0"
+        if let start = request.start {
+            let startName = (start.name ?? "起点").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "起点"
+            s += "&slat=\(start.lat)&slon=\(start.lng)&sname=\(startName)"
+        }
         if let u = URL(string: s), UIApplication.shared.canOpenURL(u) {
             UIApplication.shared.open(u)
         } else {
-            let web = "https://uri.amap.com/navigation?to=\(request.dest.lng),\(request.dest.lat),\(name)&mode=car&coordinate=gaode&callnative=1"
+            var web = "https://uri.amap.com/navigation?"
+            if let start = request.start {
+                let startName = (start.name ?? "起点").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "起点"
+                web += "from=\(start.lng),\(start.lat),\(startName)&"
+            }
+            web += "to=\(request.dest.lng),\(request.dest.lat),\(name)&mode=car&coordinate=gaode&callnative=1"
             if let u = URL(string: web) { UIApplication.shared.open(u) }
         }
     }
@@ -255,17 +422,22 @@ final class NaviViewController: UIViewController {
 extension NaviViewController: AMapNaviDriveManagerDelegate {
 
     func driveManager(onCalculateRouteSuccess driveManager: AMapNaviDriveManager) {
-        let started = simulate ? driveManager.startEmulatorNavi() : driveManager.startGPSNavi()
-        if !started { showFatal("导航没能启动"); return }
-        startYinSay()
-        // 真实驾驶：自己也收一路定位，留最近一个点，供开口时反查「现在路过哪儿」
-        if !simulate {
-            locMgr.delegate = self
-            locMgr.startUpdatingLocation()
+        if simulate {
+            guard driveManager.startEmulatorNavi() else {
+                showFatal("导航没能启动")
+                return
+            }
+            navigationStarted = true
+            startYinSay()
+        } else {
+            gpsStartAttempts = 0
+            attemptStartGPSNavigation(driveManager)
         }
     }
 
     func driveManager(_ driveManager: AMapNaviDriveManager, onCalculateRouteFailure error: Error) {
+        gpsStartRetryWork?.cancel()
+        gpsStartRetryWork = nil
         showFatal("算路失败：\(error.localizedDescription)")
     }
 

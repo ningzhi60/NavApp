@@ -8,22 +8,34 @@ targets:
     type: application
     platform: iOS
     sources:
-      - Sources
+      - path: Sources
+        excludes:
+          - CompanionAssets
+      - path: Sources/CompanionAssets
+        buildPhase: resources
+      - Shared
+    dependencies:
+      - target: CompanionWidget
+        embed: true
+      - target: ScreenBroadcast
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.an.yinnav
         MARKETING_VERSION: "0.1"
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "5"
         SWIFT_VERSION: "5.0"
         SWIFT_OBJC_BRIDGING_HEADER: Sources/NavApp-Bridging-Header.h
+        CODE_SIGN_ENTITLEMENTS: Sources/NavApp.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         # 静态链接高德（不用 use_frameworks!），配桥接头即可在 Swift 里用 ObjC SDK
         CLANG_ENABLE_MODULES: YES
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: 因导航
+        CFBundleDisplayName: YinNav
         CFBundleShortVersionString: "0.1"
+        NSSupportsLiveActivities: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -31,6 +43,10 @@ targets:
         NSLocationWhenInUseUsageDescription: 用于导航定位，实时规划路线并在路口给你播报。
         NSLocationAlwaysAndWhenInUseUsageDescription: 锁屏或切到后台也要持续定位，你开车时导航才不会中断。
         NSLocationTemporaryUsageDescriptionDictionary: {}
+        # Phase A：语音唤醒自检所需权限。导航与现有播报不依赖这两项，拒绝后仍可正常使用。
+        NSMicrophoneUsageDescription: 语音唤醒和对话需要使用麦克风
+        NSSpeechRecognitionUsageDescription: 把你说的话转成文字发给因
+        NSHealthShareUsageDescription: 读取你授权的睡眠、步数、HRV 与经期记录，让灵动岛理解当下状态。
         # 后台模式：location = 后台持续定位；audio = 后台/锁屏也能播报语音
         UIBackgroundModes:
           - location
@@ -40,6 +56,54 @@ targets:
           - CFBundleURLName: com.an.yinnav
             CFBundleURLSchemes:
               - yinnav
+  CompanionWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.1"
+    sources:
+      - CompanionWidget
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.an.yinnav.CompanionWidget
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "5"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+    info:
+      path: CompanionWidget/Info.plist
+      properties:
+        CFBundleDisplayName: YinHome
+        CFBundleShortVersionString: "0.1"
+        NSSupportsLiveActivities: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+  ScreenBroadcast:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - ScreenBroadcast
+      - Sources/Secrets.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.an.yinnav.ScreenBroadcast
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "5"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+    info:
+      path: ScreenBroadcast/Info.plist
+      properties:
+        CFBundleDisplayName: YinScreen
+        CFBundleShortVersionString: "0.1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SampleHandler
 schemes:
   NavApp:
     build:

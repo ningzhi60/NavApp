@@ -2,6 +2,10 @@ import Foundation
 import AVFoundation
 import CryptoKit
 
+extension Notification.Name {
+    static let voiceManagerOutputStateDidChange = Notification.Name("VoiceManagerOutputStateDidChange")
+}
+
 /// 因的声音播报核心。
 /// 一句话职责：给我一段文字，我用因的 MiniMax 克隆音念出来；
 /// 合成失败 / 超时 / 没配 key，立刻退回系统中文语音——导航是保命功能，绝不哑巴。
@@ -13,6 +17,8 @@ final class VoiceManager: NSObject {
     /// 途中「碎碎念」专用播放器：独立于导航播报，不计入 isSpeaking，
     /// 所以导航转向播报永远能抢在它前面（保命优先）。
     private var chatterPlayer: AVAudioPlayer?
+    private var chatterRequestId = 0
+    private var chatterCompletion: ((Bool) -> Void)?
     private let synth = AVSpeechSynthesizer()
     private let cacheDir: URL
     /// 每次 speak 自增；回调里比对，晚到的旧请求直接丢弃（打断逻辑）。
@@ -20,13 +26,23 @@ final class VoiceManager: NSObject {
     /// MiniMax 合成超时（秒）。HD 合成一句常要 1~2s，给足余量；导航高频短语走缓存是秒开。
     /// 超时即退回系统音——车里最多等这么久，不会长时间哑巴。
     private let synthTimeout: TimeInterval = 6.0
+    /// Active voice replies are longer than turn prompts, so they get more synthesis time.
+    /// Navigation prompts keep the six-second failover window for safety.
+    private let chatterSynthTimeout: TimeInterval = 12.0
     /// 「正在忙」标志：从收到 speak 请求（含网络合成那段空档）起为 true，直到真正播完/兜底播完。
     /// 高德的 driveManagerIsNaviSoundPlaying 靠它判断——忙就别急着发下一句，避免抢播。
     private var busy = false
+    /// 导航页存活期间由 NaviViewController 持有；持有时任何播放都不得切回 `.playback`。
+    private var navigationAudioSessionHeld = false
 
     /// 因此刻是否在出声（含合成中的空档）。高德用它决定要不要发下一句播报。
     var isSpeaking: Bool {
         return busy || (player?.isPlaying ?? false) || synth.isSpeaking
+    }
+
+    /// 回声抑制使用：包含导航播报、系统兜底和不计入 isSpeaking 的碎碎念。
+    var isAudioOutputActive: Bool {
+        return isSpeaking || (chatterPlayer?.isPlaying ?? false)
     }
 
     private override init() {
@@ -39,6 +55,28 @@ final class VoiceManager: NSObject {
 
     // MARK: - 对外入口
 
+    /// Phase B：进入导航时设置一次，全程保持；刻意不启用 `.allowBluetooth`，避免 HFP 电话音质。
+    @discardableResult
+    func beginNavigationAudioSession() -> Bool {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playAndRecord, mode: .default,
+                                    options: [.duckOthers, .defaultToSpeaker, .allowBluetoothA2DP])
+            try session.setActive(true)
+            navigationAudioSessionHeld = true
+            return true
+        } catch {
+            navigationAudioSessionHeld = false
+            NSLog("[VoiceManager][Phase B] playAndRecord failed: %@", error.localizedDescription)
+            return false
+        }
+    }
+
+    func endNavigationAudioSession() {
+        navigationAudioSessionHeld = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+
     /// 念一句话。会打断上一句正在播/在合成的内容。
     func speak(_ raw: String) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -47,10 +85,12 @@ final class VoiceManager: NSObject {
         currentPlayId += 1
         let playId = currentPlayId
         busy = true   // 从这一刻起就算"在忙"，覆盖住网络合成的空档
+        publishOutputState()
 
         // 打断上一句（含正在放的碎碎念——导航播报永远优先，保命）
         player?.stop()
         player = nil
+        finishChatter(success: false)
         chatterPlayer?.stop()
         chatterPlayer = nil
         synth.stopSpeaking(at: .immediate)
@@ -79,46 +119,75 @@ final class VoiceManager: NSObject {
         currentPlayId += 1
         player?.stop()
         player = nil
+        finishChatter(success: false)
         chatterPlayer?.stop()
         chatterPlayer = nil
         synth.stopSpeaking(at: .immediate)
         busy = false
         deactivateSession()
+        publishOutputState()
     }
 
     /// 途中「碎碎念」：因主动说的闲聊 / 路过点评。跟保命播报是两码事——
     /// 1) 正在念导航（或在合成空档）就直接放弃，绝不打断转向播报；
     /// 2) 合成失败就静默跳过，**不退系统音**（闲聊不值得让机器音蹦出来）；
     /// 3) 用独立 chatterPlayer，不计入 isSpeaking——所以任何时候导航播报都能抢在它前面。
-    func speakChatter(_ raw: String) {
+    func speakChatter(_ raw: String, completion: ((Bool) -> Void)? = nil) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        guard !isSpeaking else { return }            // 有导航播报就让路
-        if chatterPlayer?.isPlaying == true { return } // 上一句碎碎念还没完就不叠
+        guard !text.isEmpty else { completion?(false); return }
+        guard !isSpeaking else { completion?(false); return } // 有导航播报就让路
+        if chatterPlayer?.isPlaying == true { completion?(false); return }
+
+        chatterRequestId += 1
+        let requestId = chatterRequestId
+        chatterCompletion = completion
 
         if let data = cachedAudio(for: text) {
-            playChatter(data)
+            playChatter(data, requestId: requestId)
         } else {
-            synthesize(text: text) { [weak self] data in
-                guard let self = self, let data = data, !data.isEmpty else { return } // 失败静默
+            synthesize(text: text, timeout: chatterSynthTimeout) { [weak self] data in
+                guard let self = self, requestId == self.chatterRequestId else { return }
+                guard let data = data, !data.isEmpty else {
+                    self.finishChatter(success: false)
+                    return
+                }
                 self.cache(data: data, for: text)
                 DispatchQueue.main.async {
-                    guard !self.isSpeaking else { return } // 合成回来时导航已开口就放弃这句
-                    self.playChatter(data)
+                    guard requestId == self.chatterRequestId else { return }
+                    guard !self.isSpeaking else {
+                        self.finishChatter(success: false)
+                        return
+                    }
+                    self.playChatter(data, requestId: requestId)
                 }
             }
         }
     }
 
-    private func playChatter(_ data: Data) {
+    private func playChatter(_ data: Data, requestId: Int) {
+        guard requestId == chatterRequestId else { return }
         activateSession()
         do {
             chatterPlayer = try AVAudioPlayer(data: data)
             chatterPlayer?.delegate = self
-            chatterPlayer?.play()
+            guard chatterPlayer?.play() == true else {
+                chatterPlayer = nil
+                finishChatter(success: false)
+                return
+            }
+            publishOutputState()
         } catch {
             // 放不了就算了——闲聊不兜底
+            finishChatter(success: false)
         }
+    }
+
+    private func finishChatter(success: Bool) {
+        chatterRequestId += 1
+        let completion = chatterCompletion
+        chatterCompletion = nil
+        guard let completion = completion else { return }
+        DispatchQueue.main.async { completion(success) }
     }
 
     /// 预合成一批高频短语进缓存（Phase 2b 导航开始前调，避免第一次现合成的空档）。
@@ -134,7 +203,8 @@ final class VoiceManager: NSObject {
 
     // MARK: - MiniMax 合成
 
-    private func synthesize(text: String, completion: @escaping (Data?) -> Void) {
+    private func synthesize(text: String, timeout: TimeInterval? = nil,
+                            completion: @escaping (Data?) -> Void) {
         guard !Secrets.minimaxApiKey.isEmpty,
               !Secrets.minimaxGroupId.isEmpty,
               !Secrets.minimaxVoiceId.isEmpty else {
@@ -150,7 +220,7 @@ final class VoiceManager: NSObject {
         let speed = Double(Secrets.minimaxSpeed) ?? 1.0
         let model = Secrets.minimaxModel.isEmpty ? "speech-02-hd" : Secrets.minimaxModel
 
-        var req = URLRequest(url: url, timeoutInterval: synthTimeout)
+        var req = URLRequest(url: url, timeoutInterval: timeout ?? synthTimeout)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(Secrets.minimaxApiKey)", forHTTPHeaderField: "Authorization")
@@ -194,6 +264,7 @@ final class VoiceManager: NSObject {
                 self.player?.delegate = self
                 self.player?.play()
                 self.busy = false   // 已在放，player.isPlaying 接管"在忙"状态
+                self.publishOutputState()
             } catch {
                 self.fallback(fallbackText)
             }
@@ -209,19 +280,31 @@ final class VoiceManager: NSObject {
             u.rate = AVSpeechUtteranceDefaultSpeechRate
             self.synth.speak(u)
             self.busy = false   // 已交给系统合成器，synth.isSpeaking 接管"在忙"状态
+            self.publishOutputState()
         }
     }
 
     /// 播放前激活音频会话：压低（不掐断）其他 App 的声音，导航播报优先。
     private func activateSession() {
         let s = AVAudioSession.sharedInstance()
+        if navigationAudioSessionHeld {
+            try? s.setActive(true)
+            return
+        }
         try? s.setCategory(.playback, mode: .voicePrompt,
                            options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
         try? s.setActive(true)
     }
 
     private func deactivateSession() {
+        guard !navigationAudioSessionHeld else { return }
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+
+    private func publishOutputState() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .voiceManagerOutputStateDidChange, object: self)
+        }
     }
 
     // MARK: - 磁盘缓存（key = 文本的 MD5）
@@ -247,16 +330,20 @@ extension VoiceManager: AVAudioPlayerDelegate {
         if p === chatterPlayer {
             chatterPlayer = nil
             if !isSpeaking { deactivateSession() } // 导航没在说才让出会话
+            publishOutputState()
+            finishChatter(success: flag)
             return
         }
         busy = false
         deactivateSession()
+        publishOutputState()
     }
 }
 extension VoiceManager: AVSpeechSynthesizerDelegate {
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         busy = false
         deactivateSession()
+        publishOutputState()
     }
 }
 
