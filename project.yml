@@ -22,6 +22,7 @@ targets:
         CURRENT_PROJECT_VERSION: "5"
         SWIFT_VERSION: "5.0"
         SWIFT_OBJC_BRIDGING_HEADER: Sources/NavApp-Bridging-Header.h
+        CODE_SIGN_ENTITLEMENTS: Sources/NavApp.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         # 静态链接高德（不用 use_frameworks!），配桥接头即可在 Swift 里用 ObjC SDK
         CLANG_ENABLE_MODULES: YES

@@ -86,8 +86,15 @@ final class LifeSignalCollector: NSObject, CLLocationManagerDelegate {
         let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
         let menstrual = HKObjectType.categoryType(forIdentifier: .menstrualFlow)!
         let readTypes: Set<HKObjectType> = [step, hrv, sleep, menstrual]
-        healthStore.requestAuthorization(toShare: [], read: readTypes) { [weak self] _, _ in
+        healthStore.requestAuthorization(toShare: [], read: readTypes) { [weak self] granted, error in
             guard let self else { return }
+            guard granted else {
+                DispatchQueue.main.async {
+                    completion(["availability": "authorization_failed",
+                                "error": error?.localizedDescription ?? "HealthKit entitlement or permission unavailable"])
+                }
+                return
+            }
             let group = DispatchGroup()
             let lock = NSLock()
             var values: [String: Any] = ["availability": "requested"]
