@@ -11,6 +11,10 @@ struct CompanionActivityAttributes: ActivityAttributes {
         var activity: String
         var innerThought: String
         var updatedAt: Date
+        /// Optional keeps an already-running activity decodable after an app upgrade.
+        var themeID: String?
+        var priority: Int?
+        var decorationsEnabled: Bool?
     }
 
     var roomName: String

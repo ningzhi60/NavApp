@@ -6,6 +6,9 @@ struct CompanionPublicState {
     let activity: String
     let innerThought: String
     let image: UIImage?
+    let themeID: String
+    let priority: Int
+    let decorationsEnabled: Bool
 }
 
 final class CompanionActivityManager {
@@ -32,7 +35,10 @@ final class CompanionActivityManager {
             mood: String(state.mood.prefix(18)),
             activity: String(state.activity.prefix(18)),
             innerThought: String(state.innerThought.prefix(100)),
-            updatedAt: Date())
+            updatedAt: Date(),
+            themeID: state.themeID,
+            priority: state.priority,
+            decorationsEnabled: state.decorationsEnabled)
 
         if let activity = Activity<CompanionActivityAttributes>.activities.first {
             Task {

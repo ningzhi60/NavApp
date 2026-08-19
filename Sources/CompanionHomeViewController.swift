@@ -46,6 +46,7 @@ final class CompanionHomeViewController: UIViewController {
             makeButton("🏠 开启 / 更新灵动岛", #selector(startOrUpdate)),
             makeButton("✨ 让因换一个状态", #selector(nextPreview)),
             makeButton("🖼 添加或删除 PNG", #selector(manageImages)),
+            makeButton("🎨 主题、预览与状态历史", #selector(manageAppearance)),
             broadcastHint,
             broadcastPicker,
             makeButton("⏹ 关闭灵动岛", #selector(endActivity), color: .systemRed),
@@ -105,11 +106,21 @@ final class CompanionHomeViewController: UIViewController {
             case .success(let generated):
                 CompanionImageStore.shared.select(id: generated.iconID)
                 let chosen = CompanionImageStore.shared.item(id: generated.iconID)
+                let appearance = CompanionAppearanceStore.shared
+                let themeID = appearance.resolvedTheme(modelTheme: generated.themeID)
                 let state = CompanionPublicState(
                     mood: generated.mood,
                     activity: generated.activity,
                     innerThought: generated.innerThought,
-                    image: chosen?.image)
+                    image: chosen?.image,
+                    themeID: themeID,
+                    priority: generated.priority,
+                    decorationsEnabled: appearance.decorationsEnabled)
+                appearance.addHistory(.init(
+                    mood: generated.mood, activity: generated.activity,
+                    innerThought: generated.innerThought, iconID: chosen?.id ?? "",
+                    themeID: themeID, priority: generated.priority,
+                    updatedAt: generated.updatedAt))
                 CompanionActivityManager.shared.publish(state) { [weak self] error in
                     if let error = error {
                         self?.refresh(message: "开启失败：\(error)")
@@ -118,7 +129,7 @@ final class CompanionHomeViewController: UIViewController {
                     let effort = generated.effort.isEmpty ? "" : " · \(generated.effort)"
                     let source = generated.cached ? "复用近期状态" : "新生成"
                     self?.refresh(message:
-                        "状态：\(generated.mood) · 图片：\(chosen?.name ?? "无")\n正在做：\(generated.activity)\n心里话：\(generated.innerThought)\n\(generated.backend) · \(generated.model)\(effort) · \(source) ✅")
+                        "状态：\(generated.mood) · 图片：\(chosen?.name ?? "无")\n正在做：\(generated.activity)\n心里话：\(generated.innerThought)\n主题：\(CompanionThemes.resolve(themeID).name) · 优先级 \(generated.priority)\n更新：\(generated.updatedAt.formatted(date: .omitted, time: .shortened))\n\(generated.backend) · \(generated.model)\(effort) · \(source) ✅")
                 }
             }
         }
@@ -126,6 +137,10 @@ final class CompanionHomeViewController: UIViewController {
 
     @objc private func manageImages() {
         navigationController?.pushViewController(CompanionImageManagerViewController(), animated: true)
+    }
+
+    @objc private func manageAppearance() {
+        navigationController?.pushViewController(CompanionAppearanceViewController(), animated: true)
     }
 
     @objc private func endActivity() {
@@ -233,7 +248,7 @@ final class CompanionImageManagerViewController: UITableViewController,
         let item = items[indexPath.row]
         cell.imageView?.image = item.image
         cell.imageView?.contentMode = .scaleAspectFit
-        cell.textLabel?.text = item.name
+        cell.textLabel?.text = (CompanionImageStore.shared.isEnabledForAI(item.id) ? "" : "⏸ ") + item.name
         cell.detailTextLabel?.text = item.meaning
         cell.detailTextLabel?.numberOfLines = 2
         cell.accessoryType = CompanionImageStore.shared.selectedID == item.id ? .checkmark : .none
@@ -251,6 +266,20 @@ final class CompanionImageManagerViewController: UITableViewController,
         guard editingStyle == .delete else { return }
         try? CompanionImageStore.shared.delete(items[indexPath.row])
         reload()
+    }
+
+    override func tableView(_ tableView: UITableView,
+                            leadingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        let item = items[indexPath.row]
+        let enabled = CompanionImageStore.shared.isEnabledForAI(item.id)
+        let action = UIContextualAction(style: .normal,
+                                        title: enabled ? "禁止 AI" : "允许 AI") { [weak self] _, _, done in
+            CompanionImageStore.shared.setEnabledForAI(!enabled, id: item.id)
+            self?.reload()
+            done(true)
+        }
+        action.backgroundColor = enabled ? .systemOrange : .systemGreen
+        return UISwipeActionsConfiguration(actions: [action])
     }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {

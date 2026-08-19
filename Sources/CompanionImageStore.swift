@@ -33,6 +33,7 @@ final class CompanionImageStore {
     private let customGroupsKey = "companion.customImageGroups.v2"
     private let customItemsKey = "companion.customImages.v2"
     private let hiddenBuiltInsKey = "companion.hiddenBuiltInImages.v2"
+    private let disabledIDsKey = "companion.disabledImageIDs.v2"
     private let fileManager = FileManager.default
 
     private let builtInGroup = CompanionImageGroup(
@@ -86,6 +87,19 @@ final class CompanionImageStore {
     private var hiddenBuiltIns: Set<String> {
         get { Set(decode([String].self, key: hiddenBuiltInsKey, fallback: [])) }
         set { encode(Array(newValue).sorted(), key: hiddenBuiltInsKey) }
+    }
+
+    private var disabledIDs: Set<String> {
+        get { Set(decode([String].self, key: disabledIDsKey, fallback: [])) }
+        set { encode(Array(newValue).sorted(), key: disabledIDsKey) }
+    }
+
+    func isEnabledForAI(_ id: String) -> Bool { !disabledIDs.contains(id) }
+
+    func setEnabledForAI(_ enabled: Bool, id: String) {
+        var values = disabledIDs
+        if enabled { values.remove(id) } else { values.insert(id) }
+        disabledIDs = values
     }
 
     func groups() -> [CompanionImageGroup] { [builtInGroup] + customGroups }
@@ -150,7 +164,7 @@ final class CompanionImageStore {
     /// Only names/meanings go to the model. Image bytes and filenames stay on-device.
     func modelCatalog() -> [String: Any] {
         ["groupID": activeGroup.id, "groupName": activeGroup.name,
-         "images": items().prefix(30).map {
+         "images": items().filter { isEnabledForAI($0.id) }.prefix(30).map {
             ["id": $0.id, "name": $0.name, "meaning": $0.meaning]
          }]
     }

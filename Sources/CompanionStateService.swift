@@ -7,6 +7,9 @@ struct CompanionGeneratedState {
     let activity: String
     let innerThought: String
     let iconID: String
+    let themeID: String
+    let priority: Int
+    let updatedAt: Date
     let backend: String
     let model: String
     let effort: String
@@ -38,6 +41,7 @@ final class CompanionStateService {
             "locale": Locale.current.identifier,
             "timeZone": TimeZone.current.identifier,
             "imageCatalog": CompanionImageStore.shared.modelCatalog(),
+            "companionDoNotDisturb": CompanionAppearanceStore.shared.doNotDisturb,
         ]
         LifeSignalCollector.shared.collect { [weak self] lifeSignals in
             guard let self else { return }
@@ -82,6 +86,10 @@ final class CompanionStateService {
                 activity: activity,
                 innerThought: innerThought,
                 iconID: json["iconID"] as? String ?? "",
+                themeID: json["themeID"] as? String ?? "moonlight",
+                priority: json["priority"] as? Int ?? 20,
+                updatedAt: Date(timeIntervalSince1970:
+                    (json["updatedAt"] as? Double) ?? (json["ts"] as? Double) ?? Date().timeIntervalSince1970),
                 backend: json["backend"] as? String ?? "?",
                 model: json["model"] as? String ?? "?",
                 effort: json["effort"] as? String ?? "",
