@@ -83,16 +83,14 @@ private struct CompanionCompactBadge: View {
 
     var body: some View {
         ZStack {
-            Circle().fill(Color.mint)
             if let data, let image = UIImage(data: data) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
-                    .clipShape(Circle())
+                    .shadow(color: .purple.opacity(0.55), radius: 1)
             } else {
-                Text("因")
-                    .font(.system(size: 11, weight: .black))
-                    .foregroundStyle(.black)
+                Circle().fill(Color.mint)
+                Text("因").font(.system(size: 11, weight: .black)).foregroundStyle(.black)
             }
         }
         .frame(width: 22, height: 22)
@@ -109,6 +107,7 @@ private struct CompanionIcon: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
+                    .shadow(color: .purple.opacity(0.5), radius: 2)
             } else {
                 ZStack {
                     RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
@@ -120,6 +119,5 @@ private struct CompanionIcon: View {
             }
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
     }
 }

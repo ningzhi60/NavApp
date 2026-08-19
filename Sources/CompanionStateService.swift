@@ -6,6 +6,7 @@ struct CompanionGeneratedState {
     let mood: String
     let activity: String
     let innerThought: String
+    let iconID: String
     let backend: String
     let model: String
     let effort: String
@@ -36,6 +37,7 @@ final class CompanionStateService {
             "thermalState": ProcessInfo.processInfo.thermalState.rawValue,
             "locale": Locale.current.identifier,
             "timeZone": TimeZone.current.identifier,
+            "imageCatalog": CompanionImageStore.shared.modelCatalog(),
         ]
         LifeSignalCollector.shared.collect { [weak self] lifeSignals in
             guard let self else { return }
@@ -79,6 +81,7 @@ final class CompanionStateService {
                 mood: json["mood"] as? String ?? "安静",
                 activity: activity,
                 innerThought: innerThought,
+                iconID: json["iconID"] as? String ?? "",
                 backend: json["backend"] as? String ?? "?",
                 model: json["model"] as? String ?? "?",
                 effort: json["effort"] as? String ?? "",

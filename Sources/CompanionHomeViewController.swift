@@ -85,7 +85,7 @@ final class CompanionHomeViewController: UIViewController {
         let count = CompanionImageStore.shared.items().count
         let support = CompanionActivityManager.shared.isSupported ? "可用" : "不可用或被系统关闭"
         let running = CompanionActivityManager.shared.isRunning ? "运行中" : "未开启"
-        statusLabel.text = message ?? "Live Activity：\(support) · \(running)\nPNG：\(count) 张（当前图会自动压缩后送进灵动岛）"
+        statusLabel.text = message ?? "Live Activity：\(support) · \(running)\n图片组：\(CompanionImageStore.shared.activeGroup.name) · \(count) 张"
     }
 
     @objc private func startOrUpdate() {
@@ -103,11 +103,13 @@ final class CompanionHomeViewController: UIViewController {
             case .failure(let error):
                 self?.refresh(message: "更新失败：\(error.localizedDescription)\n已有的灵动岛内容不变。")
             case .success(let generated):
+                CompanionImageStore.shared.select(id: generated.iconID)
+                let chosen = CompanionImageStore.shared.item(id: generated.iconID)
                 let state = CompanionPublicState(
                     mood: generated.mood,
                     activity: generated.activity,
                     innerThought: generated.innerThought,
-                    image: CompanionImageStore.shared.selectedImage)
+                    image: chosen?.image)
                 CompanionActivityManager.shared.publish(state) { [weak self] error in
                     if let error = error {
                         self?.refresh(message: "开启失败：\(error)")
@@ -116,7 +118,7 @@ final class CompanionHomeViewController: UIViewController {
                     let effort = generated.effort.isEmpty ? "" : " · \(generated.effort)"
                     let source = generated.cached ? "复用近期状态" : "新生成"
                     self?.refresh(message:
-                        "状态：\(generated.mood)\n正在做：\(generated.activity)\n心里话：\(generated.innerThought)\n\(generated.backend) · \(generated.model)\(effort) · \(source) ✅")
+                        "状态：\(generated.mood) · 图片：\(chosen?.name ?? "无")\n正在做：\(generated.activity)\n心里话：\(generated.innerThought)\n\(generated.backend) · \(generated.model)\(effort) · \(source) ✅")
                 }
             }
         }
@@ -135,11 +137,13 @@ final class CompanionImageManagerViewController: UITableViewController,
     PHPickerViewControllerDelegate, UIDocumentPickerDelegate {
 
     private var items: [CompanionImageItem] = []
+    private var pendingImage: UIImage?
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "小屋 PNG"
-        tableView.rowHeight = 68
+        tableView.rowHeight = 76
+        navigationItem.leftBarButtonItem = UIBarButtonItem(
+            title: "图片组", style: .plain, target: self, action: #selector(showGroups))
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             barButtonSystemItem: .add, target: self, action: #selector(showImporter))
         reload()
@@ -147,7 +151,58 @@ final class CompanionImageManagerViewController: UITableViewController,
 
     private func reload() {
         items = CompanionImageStore.shared.items()
+        title = CompanionImageStore.shared.activeGroup.name
         tableView.reloadData()
+    }
+
+    @objc private func showGroups() {
+        let store = CompanionImageStore.shared
+        let sheet = UIAlertController(title: "切换图片组", message: "模型只会从当前组选择图片", preferredStyle: .actionSheet)
+        for group in store.groups() {
+            let mark = group.id == store.activeGroupID ? "✓ " : ""
+            sheet.addAction(UIAlertAction(title: mark + group.name, style: .default) { [weak self] _ in
+                store.activeGroupID = group.id
+                self?.reload()
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "新建图片组", style: .default) { [weak self] _ in
+            self?.promptForGroup()
+        })
+        if !store.activeGroup.builtIn {
+            sheet.addAction(UIAlertAction(title: "重命名当前组", style: .default) { [weak self] _ in
+                self?.promptForGroup(rename: true)
+            })
+            sheet.addAction(UIAlertAction(title: "删除当前组", style: .destructive) { [weak self] _ in
+                try? store.deleteActiveGroup()
+                self?.reload()
+            })
+        } else {
+            sheet.addAction(UIAlertAction(title: "恢复内置猫头", style: .default) { [weak self] _ in
+                store.restoreBuiltIns()
+                self?.reload()
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        sheet.popoverPresentationController?.barButtonItem = navigationItem.leftBarButtonItem
+        present(sheet, animated: true)
+    }
+
+    private func promptForGroup(rename: Bool = false) {
+        let alert = UIAlertController(title: rename ? "重命名图片组" : "新建图片组",
+                                      message: "例如：像素猫头", preferredStyle: .alert)
+        alert.addTextField { field in
+            field.placeholder = "图片组名称"
+            if rename { field.text = CompanionImageStore.shared.activeGroup.name }
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "保存", style: .default) { [weak self, weak alert] _ in
+            let name = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !name.isEmpty else { return }
+            if rename { CompanionImageStore.shared.renameActiveGroup(name) }
+            else { CompanionImageStore.shared.createGroup(name: name) }
+            self?.reload()
+        })
+        present(alert, animated: true)
     }
 
     @objc private func showImporter() {
@@ -178,15 +233,18 @@ final class CompanionImageManagerViewController: UITableViewController,
         let item = items[indexPath.row]
         cell.imageView?.image = item.image
         cell.imageView?.contentMode = .scaleAspectFit
-        cell.textLabel?.text = "小屋图片 \(indexPath.row + 1)"
-        cell.detailTextLabel?.text = item.id
+        cell.textLabel?.text = item.name
+        cell.detailTextLabel?.text = item.meaning
+        cell.detailTextLabel?.numberOfLines = 2
         cell.accessoryType = CompanionImageStore.shared.selectedID == item.id ? .checkmark : .none
         return cell
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        CompanionImageStore.shared.selectedID = items[indexPath.row].id
-        reload()
+        let item = items[indexPath.row]
+        CompanionImageStore.shared.select(id: item.id)
+        if item.metadata.builtIn { reload() }
+        else { promptForMetadata(image: item.image, editing: item) }
     }
 
     override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
@@ -200,14 +258,40 @@ final class CompanionImageManagerViewController: UITableViewController,
         guard let provider = results.first?.itemProvider, provider.canLoadObject(ofClass: UIImage.self) else { return }
         provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
             guard let image = object as? UIImage else { return }
-            try? CompanionImageStore.shared.importImage(image)
-            DispatchQueue.main.async { self?.reload() }
+            DispatchQueue.main.async { self?.promptForMetadata(image: image) }
         }
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let url = urls.first, let data = try? Data(contentsOf: url), let image = UIImage(data: data) else { return }
-        try? CompanionImageStore.shared.importImage(image)
-        reload()
+        promptForMetadata(image: image)
+    }
+
+    private func promptForMetadata(image: UIImage?, editing item: CompanionImageItem? = nil) {
+        guard let image else { return }
+        pendingImage = image
+        let alert = UIAlertController(
+            title: item == nil ? "给猫头命名" : "编辑猫头含义",
+            message: "名称和含义会交给模型，用来准确选择这张图。", preferredStyle: .alert)
+        alert.addTextField { field in
+            field.placeholder = "名称，例如：刚睡醒"
+            field.text = item?.name
+        }
+        alert.addTextField { field in
+            field.placeholder = "含义，例如：困倦、迷糊、想赖床"
+            field.text = item?.meaning
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "保存", style: .default) { [weak self, weak alert] _ in
+            guard let self else { return }
+            let name = alert?.textFields?[0].text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let meaning = alert?.textFields?[1].text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !name.isEmpty, !meaning.isEmpty else { return }
+            if let item { CompanionImageStore.shared.update(item, name: name, meaning: meaning) }
+            else { try? CompanionImageStore.shared.importImage(image, name: name, meaning: meaning) }
+            self.pendingImage = nil
+            self.reload()
+        })
+        present(alert, animated: true)
     }
 }

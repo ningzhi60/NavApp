@@ -8,7 +8,11 @@ targets:
     type: application
     platform: iOS
     sources:
-      - Sources
+      - path: Sources
+        excludes:
+          - CompanionAssets
+      - path: Sources/CompanionAssets
+        buildPhase: resources
       - Shared
     dependencies:
       - target: CompanionWidget
